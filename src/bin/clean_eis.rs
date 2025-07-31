@@ -1,7 +1,7 @@
+use clap::Parser;
 use std::fs::File;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
-use clap::Parser;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -11,7 +11,10 @@ struct Args {
 
 fn generate_output_path(input_path: &Path) -> PathBuf {
     let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
-    let ext = input_path.extension().map(|e| e.to_string_lossy()).unwrap_or_default();
+    let ext = input_path
+        .extension()
+        .map(|e| e.to_string_lossy())
+        .unwrap_or_default();
 
     let new_filename = if ext.is_empty() {
         format!("{}_cleaned", stem)
@@ -19,7 +22,10 @@ fn generate_output_path(input_path: &Path) -> PathBuf {
         format!("{}_cleaned.{}", stem, ext)
     };
 
-    input_path.parent().unwrap_or(Path::new("")).join(new_filename)
+    input_path
+        .parent()
+        .unwrap_or(Path::new(""))
+        .join(new_filename)
 }
 
 fn process_file(input_path: &PathBuf, output_path: &PathBuf) -> io::Result<()> {
@@ -54,17 +60,19 @@ fn process_file(input_path: &PathBuf, output_path: &PathBuf) -> io::Result<()> {
                 );
                 writer.write_all(new_header.as_bytes())?;
             } else {
-                // Process data line
-                let new_data = format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}",
-                    parts[0].trim(),
-                    parts[4].trim(),
-                    parts[5].trim(),
-                    parts[6].trim(),
-                    parts[7].trim(),
-                    parts[8].trim()
-                );
-                writer.write_all(new_data.as_bytes())?;
+                let izr: Result<f64, _> = parts[5].parse();
+                if izr.unwrap_or(1.0) <= 0.0 {
+                    let new_data = format!(
+                        "{}\t{}\t{}\t{}\t{}\t{}",
+                        parts[0].trim(),
+                        parts[4].trim(),
+                        parts[5].trim(),
+                        parts[6].trim(),
+                        parts[7].trim(),
+                        parts[8].trim()
+                    );
+                    writer.write_all(new_data.as_bytes())?;
+                }
             }
             writer.write_all(b"\n")?;
         } else {
@@ -84,7 +92,11 @@ fn main() -> io::Result<()> {
     for input_path in &args.input_files {
         let output_path = generate_output_path(input_path);
         process_file(input_path, &output_path)?;
-        println!("Processed {} → {}", input_path.display(), output_path.display());
+        println!(
+            "✅ 处理完成: {} → {}",
+            input_path.display(),
+            output_path.display()
+        );
     }
 
     Ok(())
