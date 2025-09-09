@@ -73,6 +73,9 @@ fn process_file(input_path: &PathBuf, output_path: &PathBuf) -> io::Result<()> {
                     );
                     writer.write_all(new_data.as_bytes())?;
                 }
+                // else {
+                //     println!("line jumped: {:?}", line);
+                // }
             }
             writer.write_all(b"\n")?;
         } else {

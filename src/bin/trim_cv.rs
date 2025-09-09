@@ -1,6 +1,7 @@
 use clap::Parser;
 use std::io::{self, Write};
 use std::{env, fs, fs::File, path::Path, path::PathBuf};
+use regex::Regex;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -50,6 +51,7 @@ fn process_file(input_path: &PathBuf, output_path: &PathBuf) -> io::Result<()> {
 
     // 解析实验参数
     let params = parse_parameters(&lines);
+    println!("{:?}", params);
 
     let n_keep = calculate_points_to_keep(&params);
 
@@ -170,26 +172,54 @@ fn parse_parameters(lines: &[&str]) -> ExperimentParams {
 
     for line in lines.iter() {
         if line.starts_with("ExpParmas:") {
-            let parts: Vec<&str> = line.split(',').collect();
-            for part in parts {
-                if part.starts_with("Scan Rate(mV/s):") {
-                    params.scan_rate = part.replace("Scan Rate(mV/s):", "").trim().parse().unwrap();
-                } else if part.starts_with("Freq(Hz):") {
-                    params.sample_rate = part.replace("Freq(Hz):", "").trim().parse().unwrap();
-                } else if part.starts_with("Init E(V):") {
-                    let s = part.replace("Init E(V):", "");
-                    if let Some(end) = s.find(' ') {
-                        params.voltage_start = s[..end].trim().parse().unwrap();
-                    }
-                } else if part.starts_with("Step1 E(V):") {
-                    let s = part.replace("Step1 E(V):", "");
-                    if let Some(end) = s.find(' ') {
-                        params.voltage_step1 = s[..end].trim().parse().unwrap();
-                    }
-                } else if part.starts_with("Step2 E(V):") {
-                    let s = part.replace("Step2 E(V):", "");
-                    if let Some(end) = s.find(' ') {
-                        params.voltage_step2 = s[..end].trim().parse().unwrap();
+            // 查找 ExpInfo 部分在行中的位置
+            if let Some(exp_info_start) = line.find("ExpInfo:") {
+                // 只处理 ExpInfo 部分（跳过前面的 "ExpInfo:"）
+                let exp_info = &line[exp_info_start + 8..];
+
+                // 使用正则表达式按逗号分割字符串（考虑可能的空格）
+                let re = Regex::new(r",\s*").unwrap(); // 匹配逗号及后续空格
+                let parts: Vec<&str> = re.split(exp_info).collect();
+
+                for part in parts {
+                    let part = part.trim(); // 去除两端空白
+                    if part.starts_with("Scan Rate(mV/s):") {
+                        // 提取数字部分（忽略单位描述）
+                        if let Some(value) = part
+                            .split(':')
+                            .nth(1)
+                            .and_then(|s| s.split_whitespace().next())
+                        {
+                            params.scan_rate = value.trim().parse().unwrap_or_default();
+                        }
+                    } else if part.starts_with("Freq(Hz):") {
+                        if let Some(value) = part.split(':').nth(1) {
+                            params.sample_rate = value.trim().parse().unwrap_or_default();
+                        }
+                    } else if part.starts_with("Init E(V):") {
+                        if let Some(value) = part
+                            .split(':')
+                            .nth(1)
+                            .and_then(|s| s.split_whitespace().next())
+                        {
+                            params.voltage_start = value.trim().parse().unwrap_or_default();
+                        }
+                    } else if part.starts_with("Step1 E(V):") {
+                        if let Some(value) = part
+                            .split(':')
+                            .nth(1)
+                            .and_then(|s| s.split_whitespace().next())
+                        {
+                            params.voltage_step1 = value.trim().parse().unwrap_or_default();
+                        }
+                    } else if part.starts_with("Step2 E(V):") {
+                        if let Some(value) = part
+                            .split(':')
+                            .nth(1)
+                            .and_then(|s| s.split_whitespace().next())
+                        {
+                            params.voltage_step2 = value.trim().parse().unwrap_or_default();
+                        }
                     }
                 }
             }
