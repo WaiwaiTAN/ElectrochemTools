@@ -238,5 +238,5 @@ fn calculate_points_to_keep(params: &ExperimentParams) -> usize {
     let cycle_time = total_span / scan_rate_v_per_s;
 
     // 计算一个周期的数据点数
-    (cycle_time * params.sample_rate) as usize
+    (cycle_time * params.sample_rate + 1.0) as usize
 }
