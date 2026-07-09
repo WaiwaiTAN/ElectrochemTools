@@ -13,34 +13,20 @@ struct ColumnMap {
 pub fn read_eis(path: &Path) -> Result<EisData> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("failed to read EIS file {}", path.display()))?;
-    let mut non_empty = content.lines().filter(|line| !line.trim().is_empty());
-    let first = non_empty
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("EIS file is empty: {}", path.display()))?;
-    let delimiter = detect_delimiter(first);
-    let first_fields = split_line(first, delimiter);
-    let has_header = !fields_are_numeric(&first_fields);
-
     let mut rows = Vec::new();
-    let column_map = if has_header {
-        detect_columns(&first_fields)
-            .with_context(|| format!("could not detect EIS columns in {}", path.display()))?
-    } else {
-        detect_numeric_columns(&first_fields)?
-    };
+
+    let parse_plan = detect_parse_plan(&content)
+        .with_context(|| format!("could not detect EIS columns in {}", path.display()))?;
 
     for (line_idx, line) in content.lines().enumerate() {
         let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if has_header && line_idx == 0 {
+        if trimmed.is_empty() || parse_plan.header_line.is_some_and(|idx| line_idx <= idx) {
             continue;
         }
 
-        let fields = split_line(trimmed, delimiter);
-        let Some(row) = parse_row(&fields, column_map) else {
-            if has_header {
+        let fields = split_line(trimmed, parse_plan.delimiter);
+        let Some(row) = parse_row(&fields, parse_plan.column_map) else {
+            if parse_plan.has_header {
                 continue;
             }
             bail!("failed to parse numeric EIS row {}: {}", line_idx + 1, line);
@@ -60,6 +46,81 @@ pub fn read_eis(path: &Path) -> Result<EisData> {
         rows.iter().map(|row| row.1).collect(),
         rows.iter().map(|row| row.2).collect(),
     )
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ParsePlan {
+    delimiter: char,
+    column_map: ColumnMap,
+    header_line: Option<usize>,
+    has_header: bool,
+}
+
+fn detect_parse_plan(content: &str) -> Result<ParsePlan> {
+    for (line_idx, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let delimiter = detect_delimiter(trimmed);
+        let fields = split_line(trimmed, delimiter);
+        if fields_are_numeric(&fields) {
+            continue;
+        }
+        if let Ok(column_map) = detect_columns(&fields) {
+            return Ok(ParsePlan {
+                delimiter,
+                column_map,
+                header_line: Some(line_idx),
+                has_header: true,
+            });
+        }
+    }
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let delimiter = detect_delimiter(trimmed);
+        let fields = split_line(trimmed, delimiter);
+        if fields_are_numeric(&fields) {
+            return Ok(ParsePlan {
+                delimiter,
+                column_map: detect_numeric_columns(&fields)?,
+                header_line: None,
+                has_header: false,
+            });
+        }
+    }
+
+    bail!("no EIS header or numeric data row found")
+}
+
+pub fn read_eis_with_cleaning(path: &Path, drop_positive_imag: bool) -> Result<EisData> {
+    let mut data = read_eis(path)?;
+    if drop_positive_imag {
+        let rows: Vec<(f64, f64, f64)> = data
+            .frequency_hz
+            .iter()
+            .copied()
+            .zip(data.z_real.iter().copied())
+            .zip(data.z_imag.iter().copied())
+            .map(|((f, re), im)| (f, re, im))
+            .filter(|(_, _, im)| *im <= 0.0)
+            .collect();
+        if rows.is_empty() {
+            bail!("all EIS rows were removed by positive-imaginary filtering");
+        }
+        data = EisData::new(
+            rows.iter().map(|row| row.0).collect(),
+            rows.iter().map(|row| row.1).collect(),
+            rows.iter().map(|row| row.2).collect(),
+        )?;
+    } else {
+        data.sort_by_frequency_desc();
+    }
+    Ok(data)
 }
 
 pub fn write_impedance_csv(
@@ -130,12 +191,14 @@ fn detect_columns(headers: &[String]) -> Result<ColumnMap> {
         .or_else(|| normalized.iter().position(|h| h.contains("freq")))
         .ok_or_else(|| anyhow::anyhow!("missing frequency column"))?;
     let z_real = find_first(&normalized, &["zreal", "zre", "rez", "zr", "zprime", "z"])
+        .or_else(|| headers.iter().position(|h| is_real_impedance_header(h)))
         .or_else(|| normalized.iter().position(|h| h.contains("real")))
         .ok_or_else(|| anyhow::anyhow!("missing real impedance column"))?;
     let z_imag = find_first(
         &normalized,
         &["zimag", "zim", "imz", "zi", "zdoubleprime", "izr"],
     )
+    .or_else(|| headers.iter().position(|h| is_imag_impedance_header(h)))
     .or_else(|| normalized.iter().position(|h| h.contains("imag")))
     .ok_or_else(|| anyhow::anyhow!("missing imaginary impedance column"))?;
     Ok(ColumnMap {
@@ -143,6 +206,16 @@ fn detect_columns(headers: &[String]) -> Result<ColumnMap> {
         z_real,
         z_imag,
     })
+}
+
+fn is_real_impedance_header(header: &str) -> bool {
+    let value = header.trim().to_ascii_lowercase();
+    value == "z'" || value.starts_with("z'(") || value == "zr" || value == "z_real"
+}
+
+fn is_imag_impedance_header(header: &str) -> bool {
+    let value = header.trim().to_ascii_lowercase();
+    value == "z''" || value.starts_with("z''(") || value == "izr" || value == "z_imag"
 }
 
 fn detect_numeric_columns(fields: &[String]) -> Result<ColumnMap> {

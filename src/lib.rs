@@ -1,6 +1,8 @@
 pub mod drt;
+pub mod drt_compare;
 pub mod ecm;
 pub mod eis_io;
 pub mod fit;
+pub mod plot;
 pub mod regularization;
 pub mod types;

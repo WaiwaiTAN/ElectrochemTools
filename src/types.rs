@@ -75,6 +75,7 @@ impl EisData {
 pub struct FitMetrics {
     pub rmse_real: f64,
     pub rmse_imag: f64,
+    pub rmse_complex: f64,
     pub rmse_magnitude: f64,
     pub relative_rmse: f64,
     pub relative_rmse_percent: f64,
@@ -113,6 +114,7 @@ pub fn calculate_fit_metrics(exp: &EisData, z_fit: &[Complex<f64>]) -> Result<Fi
     Ok(FitMetrics {
         rmse_real,
         rmse_imag,
+        rmse_complex: rmse_magnitude,
         rmse_magnitude,
         relative_rmse,
         relative_rmse_percent,

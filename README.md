@@ -22,7 +22,7 @@ A collection of command-line tools for processing electrochemical workstation da
 ### Build from source
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/ElectrochemTools.git
+git clone https://github.com/WaiwaiTAN/ElectrochemTools.git
 cd ElectrochemTools
 cargo build --release
 ```
@@ -51,7 +51,7 @@ clean_eis -i file1.z60 file2.z60 file3.z60
 
 ### `eiscli`
 
-Post-processes EIS data from cleaned CSV/TXT files or CorrTest-style tabular exports.
+Post-processes EIS data from cleaned CSV/TXT files or raw CorrTest `.z60` / `.txt` exports.
 
 Subcommands:
 
@@ -66,9 +66,9 @@ Input should contain impedance columns equivalent to:
 frequency,Z_real,Z_imag
 ```
 
-Header names such as `freq`, `frequency_hz`, `Freq(Hz)`, `Zreal`, `Z'`, `ReZ`, `Zimag`, `Z''`, `ImZ`, and CorrTest `Zr` / `Izr` are detected. Headerless CSV files are also supported; the first three numeric columns are interpreted as `frequency`, `Z_real`, and `Z_imag`, matching the CSV output from `clean_eis`.
+Header names such as `freq`, `frequency_hz`, `Freq(Hz)`, `Zreal`, `Z'`, `ReZ`, `Zimag`, `Z''`, `ImZ`, and CorrTest `Zr` / `Izr` are detected even when they appear after CorrTest metadata. Headerless CSV files are also supported; the first three numeric columns are interpreted as `frequency`, `Z_real`, and `Z_imag`, matching the CSV output from `clean_eis`.
 
-Frequencies are sorted from high to low after reading. The imaginary impedance sign is preserved; use `--flip-imag` only when the input convention is known to be inverted.
+Frequencies are sorted from high to low after reading. The imaginary impedance sign is preserved; use `--flip-imag` only when the input convention is known to be inverted. Use `--drop-positive-imag` to apply the same positive-imaginary filtering style as `clean_eis` while reading raw `.z60` directly.
 
 DRT model:
 
@@ -92,10 +92,17 @@ Z = Rs + 1 / (1/Rct + Q(j omega)^n)
 Examples:
 
 ```bash
-eiscli drt input.csv --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100 --out result/
+eiscli drt input.csv --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100
+eiscli drt eis.z60 --drop-positive-imag --auto-lambda --nonnegative --credible-intervals
+eiscli drt eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative
+eiscli drt eis.z60 --drop-positive-imag --tau-grid drttools \
+  --compare-matlab-drt eis_clean_matlab_drttools_drt_peaks.csv \
+  --compare-matlab-regression eis_clean_matlab_drttools_eis_regression.txt
 eiscli fit-ecm input.csv --model R_QR --out result/ --rs 0.5 --rct 20 --q 1e-3 --n 0.85
-eiscli fit-ecm input.csv --model R_QR --auto-init --out result/
+eiscli fit-ecm eis.z60 --model R_QR --auto-init --drop-positive-imag --include-correlation-matrix
 ```
+
+If `--out` is omitted, output is written next to the input file using a tool-specific folder name. For example, `eis.z60` writes DRT files to `eis_drt/` and ECM fitting files to `eis_ecm/`.
 
 Development examples:
 
@@ -109,26 +116,44 @@ DRT outputs:
 | File | Contents |
 |------|----------|
 | `gamma.csv` | `tau,log10_tau,gamma` |
+| `drt_peaks.csv` | local DRT peak list sorted by peak height |
+| `drttools_compatible_drt.csv` | MATLAB DRTtools-style `L`, `R`, then `tau,gamma(tau)` rows |
+| `matlab_comparison.json` | generated when `--compare-matlab-drt` and/or `--compare-matlab-regression` is used |
+| `gamma_ci.csv` | generated when `--credible-intervals` is used; linear-Gaussian 95% intervals |
+| `lambda_scan.csv` | generated when `--auto-lambda` is used |
+| `kk_consistency.csv` | Hilbert/Kramers-Kronig-style cross-prediction residuals |
+| `kk_summary.json` | real-to-imag and imag-to-real consistency scores |
 | `reconstructed_impedance.csv` | experimental impedance, fitted impedance, and residuals |
-| `residual_summary.json` | lambda, tau range, RMSE, chi-square, and implementation note |
+| `residual_summary.json` | lambda, tau range, nonnegative flag, RMSE, relative RMSE, and implementation note |
+| `drt_gamma.svg` | DRT gamma plot |
+| `nyquist_reconstruction.svg` | Nyquist plot of experimental vs reconstructed impedance |
+
+DRT SVG plots use `log10(tau)` internally and label the x-axis at integer decades such as `10^-2`, `10^-1`, and `10^0`. Gamma plots start the y-axis at zero and use rounded tick intervals. Nyquist SVG plots use a square plotting area and equal ohm scaling on both axes, so 1 ohm horizontally has the same screen length as 1 ohm vertically.
+
+For easier comparison with MATLAB DRTtools exports, `--tau-grid drttools` uses `tau = 1 / frequency` as the collocation grid. The default `--tau-grid logspace` keeps using a separately specified or inferred log-spaced grid.
+
+When MATLAB DRTtools export files are available, `--compare-matlab-drt` and `--compare-matlab-regression` produce `matlab_comparison.json` with gamma and reconstructed-impedance RMSE values. This is a diagnostic comparison, not an assertion that both tools should match exactly.
 
 ECM fitting outputs:
 
 | File | Contents |
 |------|----------|
-| `fit_params.json` | fitted `Rs`, `Rct`, `Q`, `n`, weighting, RMSE, chi-square, iteration count |
+| `fit_params.json` | fitted `Rs`, `Rct`, `Q`, `n`, weighted SSE, mean/reduced chi-square, RMSE, parameter standard errors, and optional correlation matrix |
 | `fitted_impedance.csv` | experimental impedance, fitted impedance, and residuals |
+| `nyquist_fit.svg` | Nyquist plot of experimental vs fitted impedance |
+
+After successful `fit-ecm`, the CLI prints fit quality and parameter estimates to stdout. The parameter correlation matrix is not printed; pass `--include-correlation-matrix` to store it in `fit_params.json`.
 
 Current limitations and TODO:
 
-- DRT is currently a direct Debye discretization MVP, not a full reproduction of the DRTtools RBF method.
-- DRT gamma nonnegativity is not enforced; future work can add NNLS, bounded QP, projected gradient, or active-set solvers.
-- Bayesian credible intervals, Hilbert transform / Kramers-Kronig quality scores, automatic lambda selection, and peak fitting are not implemented.
+- DRT is currently a direct Debye discretization implementation, not a full reproduction of the DRTtools RBF method.
+- DRT supports an approximate projected-gradient `--nonnegative` mode, but not DRTtools' full bounded quadratic-programming solver.
+- DRT supports `--auto-lambda` scanning, local peak detection, linear-Gaussian credible intervals, and a DRT-based Hilbert/Kramers-Kronig consistency proxy.
+- The credible interval output is not the original DRTtools HMC sampler; it is a deterministic Gaussian approximation around the Tikhonov solution.
 - ECM fitting currently supports only `R_QR`; future models can include `Rs-(Q||R)-(Q||R)`, Warburg diffusion, and inductance.
 - `modulus` and `proportional` weighting are equivalent in the current implementation because both scale complex residuals by `1 / |Z_exp|`.
-- Plot output such as `nyquist_fit.png` is a TODO.
 
-Attribution: the DRT implementation was designed after reviewing the open-source MATLAB DRTtools algorithm structure, especially the real/imaginary matrix assembly and Tikhonov quadratic form. This Rust CLI is a smaller MVP and does not include the DRTtools GUI, RBF discretization, Bayesian analysis, or Hilbert-transform modules.
+Attribution: the DRT implementation in `eiscli` is derived from the algorithmic structure of the open-source MATLAB project [Mycroft2333/DRTtools](https://github.com/Mycroft2333/DRTtools), especially the real/imaginary matrix assembly, Tikhonov regularization, and EIS consistency-score workflow. This Rust CLI is an independent command-line implementation and does not include the DRTtools GUI or an exact reproduction of its RBF/QP/HMC internals.
 
 
 ### `merge_cor`
@@ -173,7 +198,7 @@ trim_cv -i scan1.cor scan2.cor
 | Format | Extension | Tools |
 |--------|-----------|-------|
 | CorrTest CV / OCP / i-t / E-t | `.cor` | `merge_cor`, `trim_cv` |
-| CorrTest EIS export | `.z60` / `.txt` | `clean_eis` |
+| CorrTest EIS export | `.z60` / `.txt` | `clean_eis`, `eiscli` |
 
 
 ---

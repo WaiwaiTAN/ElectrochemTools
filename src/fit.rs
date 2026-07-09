@@ -29,8 +29,12 @@ pub struct RqrFitResult {
     pub params: RqrParams,
     pub z_fit: Vec<Complex<f64>>,
     pub metrics: FitMetrics,
+    pub weighted_sse: f64,
     pub mean_weighted_chi_square: f64,
     pub reduced_chi_square: f64,
+    pub parameter_std_errors: Option<RqrParams>,
+    pub parameter_rel_std_error_percent: Option<RqrParams>,
+    pub parameter_correlation_matrix: Option<Vec<Vec<f64>>>,
     pub iterations: usize,
     pub converged: bool,
     pub weight: Weighting,
@@ -56,11 +60,7 @@ pub fn fit_rqr(data: &EisData, settings: &RqrFitSettings) -> Result<RqrFitResult
     let mut p = transform_params(settings.initial);
     let mut mu = 1.0e-3;
 
-    let mut residual = residual_vector(
-        data,
-        inverse_transform_params(&p),
-        settings.weight,
-    );
+    let mut residual = residual_vector(data, inverse_transform_params(&p), settings.weight);
 
     let mut cost = residual.dot(&residual);
     let mut converged = false;
@@ -88,11 +88,7 @@ pub fn fit_rqr(data: &EisData, settings: &RqrFitSettings) -> Result<RqrFitResult
         let trial_p = &p + &step;
         let trial_params = inverse_transform_params(&trial_p);
 
-        let trial_residual = residual_vector(
-            data,
-            trial_params,
-            settings.weight,
-        );
+        let trial_residual = residual_vector(data, trial_params, settings.weight);
 
         let trial_cost = trial_residual.dot(&trial_residual);
 
@@ -132,15 +128,20 @@ pub fn fit_rqr(data: &EisData, settings: &RqrFitSettings) -> Result<RqrFitResult
     // degrees of freedom = number of data points - number of parameters
     let dof = (residual_len - num_params).max(1.0);
     let reduced_chi_square = cost / dof;
+    let uncertainty = estimate_uncertainty(data, &p, settings.weight, reduced_chi_square);
 
     Ok(RqrFitResult {
         params,
         z_fit,
         metrics,
-
-        // 新增，更适合作为用户看到的 chi_squared
+        weighted_sse,
         mean_weighted_chi_square,
         reduced_chi_square,
+        parameter_std_errors: uncertainty.as_ref().map(|value| value.std_errors),
+        parameter_rel_std_error_percent: uncertainty
+            .as_ref()
+            .map(|value| value.rel_std_error_percent),
+        parameter_correlation_matrix: uncertainty.map(|value| value.correlation_matrix),
 
         iterations,
         converged,
@@ -250,6 +251,71 @@ fn finite_difference_jacobian(data: &EisData, p: &DVector<f64>, weight: Weightin
         jacobian.set_column(col, &diff);
     }
     jacobian
+}
+
+#[derive(Debug, Clone)]
+struct ParameterUncertainty {
+    std_errors: RqrParams,
+    rel_std_error_percent: RqrParams,
+    correlation_matrix: Vec<Vec<f64>>,
+}
+
+fn estimate_uncertainty(
+    data: &EisData,
+    p: &DVector<f64>,
+    weight: Weighting,
+    reduced_chi_square: f64,
+) -> Option<ParameterUncertainty> {
+    let jacobian = finite_difference_jacobian(data, p, weight);
+    let covariance_transformed = (jacobian.transpose() * jacobian)
+        .try_inverse()?
+        .scale(reduced_chi_square);
+    let params = inverse_transform_params(p);
+    let n_scaled = (params.n - N_MIN) / (N_MAX - N_MIN);
+    let n_derivative = (N_MAX - N_MIN) * n_scaled * (1.0 - n_scaled);
+    let transform = DMatrix::<f64>::from_diagonal(&DVector::from_vec(vec![
+        params.rs,
+        params.rct,
+        params.q,
+        n_derivative,
+    ]));
+    let covariance = &transform * covariance_transformed * transform.transpose();
+    let std = [
+        covariance[(0, 0)].max(0.0).sqrt(),
+        covariance[(1, 1)].max(0.0).sqrt(),
+        covariance[(2, 2)].max(0.0).sqrt(),
+        covariance[(3, 3)].max(0.0).sqrt(),
+    ];
+    let values = [params.rs, params.rct, params.q, params.n];
+    let mut correlation_matrix = vec![vec![f64::NAN; 4]; 4];
+    for row in 0..4 {
+        for col in 0..4 {
+            let denom = std[row] * std[col];
+            correlation_matrix[row][col] = if denom > 0.0 {
+                (covariance[(row, col)] / denom).clamp(-1.0, 1.0)
+            } else if row == col {
+                1.0
+            } else {
+                f64::NAN
+            };
+        }
+    }
+
+    Some(ParameterUncertainty {
+        std_errors: RqrParams {
+            rs: std[0],
+            rct: std[1],
+            q: std[2],
+            n: std[3],
+        },
+        rel_std_error_percent: RqrParams {
+            rs: 100.0 * std[0] / values[0].abs().max(1.0e-300),
+            rct: 100.0 * std[1] / values[1].abs().max(1.0e-300),
+            q: 100.0 * std[2] / values[2].abs().max(1.0e-300),
+            n: 100.0 * std[3] / values[3].abs().max(1.0e-300),
+        },
+        correlation_matrix,
+    })
 }
 
 fn transform_params(params: RqrParams) -> DVector<f64> {
