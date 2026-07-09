@@ -1,2 +1,7 @@
 /target
+/examples
+add_tools.md
 .vscode
+/DRTtools
+/tests
+/result

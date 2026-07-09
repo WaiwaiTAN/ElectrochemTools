@@ -49,9 +49,9 @@ fn extract_metadata(file_path: &PathBuf) -> Result<(Vec<String>, Option<DateTime
             }
 
             let cleaned = parts[0].replace("Data:", "");
-            let date_str = cleaned.trim(); 
+            let date_str = cleaned.trim();
 
-            let time_str = parts[1].trim(); 
+            let time_str = parts[1].trim();
 
             match parse_datetime(&format!("{} {}", date_str, time_str)) {
                 Ok(dt) => {

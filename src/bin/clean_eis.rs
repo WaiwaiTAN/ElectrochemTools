@@ -37,7 +37,11 @@ fn generate_csv_output_path(input_path: &Path) -> PathBuf {
         .join(new_filename)
 }
 
-fn process_file(input_path: &PathBuf, output_path: &PathBuf, csv_output_path: &PathBuf) -> io::Result<()> {
+fn process_file(
+    input_path: &PathBuf,
+    output_path: &PathBuf,
+    csv_output_path: &PathBuf,
+) -> io::Result<()> {
     let input_file = File::open(input_path)?;
     let mut reader = std::io::BufReader::new(input_file);
 
