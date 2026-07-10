@@ -101,24 +101,24 @@ Z = Rs + 1 / (1/Rct + Q(j omega)^n)
 Examples:
 
 ```bash
-eiscli drt examples/data/eis_cleaned.csv --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100
-eiscli drt examples/data/eis.z60 --drop-positive-imag --auto-lambda --nonnegative --credible-intervals
-eiscli drt examples/data/eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative
-eiscli drt examples/data/eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative --fit-inductance
-eiscli drt examples/data/eis.z60 --drop-positive-imag --tau-grid drttools \
+eiscli drt -i examples/data/eis_cleaned.csv --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100
+eiscli drt -i examples/data/eis.z60 --drop-positive-imag --auto-lambda --nonnegative --credible-intervals
+eiscli drt -i examples/data/eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative
+eiscli drt -i examples/data/eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative --fit-inductance
+eiscli drt -i examples/data/eis.z60 --drop-positive-imag --tau-grid drttools \
   --compare-matlab-drt tests/golden/drttools/eis_clean_matlab_drttools_drt_peaks.csv \
   --compare-matlab-regression tests/golden/drttools/eis_clean_matlab_drttools_eis_regression.txt
-eiscli fit-ecm examples/data/eis_cleaned.csv --model R_QR --out result/ --rs 0.5 --rct 20 --q 1e-3 --n 0.85
-eiscli fit-ecm examples/data/eis.z60 --model R_QR --auto-init --drop-positive-imag --include-correlation-matrix
+eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR --out-root result/ --rs 0.5 --rct 20 --q 1e-3 --n 0.85
+eiscli fit-ecm -i examples/data/eis.z60 --model R_QR --auto-init --drop-positive-imag --include-correlation-matrix
 ```
 
-If `--out` is omitted, output is written next to the input file using a tool-specific folder name. For example, `eis.z60` writes DRT files to `eis_drt/` and ECM fitting files to `eis_ecm/`.
+All file commands accept one or more `-i/--input` paths. Results are assigned deterministically to `sample_001`, `sample_002`, and so on below `--out-root` (default `result`), with a stable `batch_summary.csv`. Use `--jobs 1` for serial execution; the default is the smaller of available logical threads and input count. Existing output directories require either `--resume` or `--overwrite`.
 
 Development examples:
 
 ```bash
-cargo run --release --bin eiscli -- drt examples/data/eis_cleaned.csv --lambda 1e-3 --out result/
-cargo run --release --bin eiscli -- fit-ecm examples/data/eis_cleaned.csv --model R_QR --auto-init --out result/
+cargo run --release --bin eiscli -- drt -i examples/data/eis_cleaned.csv --lambda 1e-3 --out-root result/
+cargo run --release --bin eiscli -- fit-ecm -i examples/data/eis_cleaned.csv --model R_QR --auto-init --out-root result/
 ```
 
 DRT outputs:

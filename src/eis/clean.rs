@@ -34,6 +34,27 @@ pub struct CleanReport {
 }
 
 pub fn clean_file(input: &Path, options: &CleanOptions) -> Result<CleanReport> {
+    let stem = input
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("eis");
+    let default_root = input
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("result");
+    let output_dir = options
+        .out_root
+        .as_deref()
+        .unwrap_or(&default_root)
+        .join(stem);
+    clean_file_to(input, options, &output_dir)
+}
+
+pub fn clean_file_to(
+    input: &Path,
+    options: &CleanOptions,
+    output_dir: &Path,
+) -> Result<CleanReport> {
     let mut outcome = read_spectrum(
         input,
         &ReadOptions {
@@ -51,20 +72,7 @@ pub fn clean_file(input: &Path, options: &CleanOptions) -> Result<CleanReport> {
         bail!("cleaning removed every EIS point from {}", input.display());
     }
 
-    let stem = input
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .unwrap_or("eis");
-    let default_root = input
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("result");
-    let output_dir = options
-        .out_root
-        .as_deref()
-        .unwrap_or(&default_root)
-        .join(stem);
-    fs::create_dir_all(&output_dir)
+    fs::create_dir_all(output_dir)
         .with_context(|| format!("failed to create {}", output_dir.display()))?;
     let csv_path = output_dir.join("cleaned.csv");
     let tsv_path = output_dir.join("cleaned.z60");

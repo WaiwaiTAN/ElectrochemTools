@@ -1,9 +1,10 @@
 use anyhow::{Context, Result, bail};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
+use electrochem_tools::batch::{BatchOptions, BatchReport, BatchStatus, default_jobs, run_batch};
 use electrochem_tools::drt::{DrtSettings, TauGridMode, scan_lambda, solve_drt};
 use electrochem_tools::drt_compare::compare_with_matlab_outputs;
 use electrochem_tools::ecm::RqrParams;
-use electrochem_tools::eis::{CleanOptions, ImagSignPolicy, clean_file};
+use electrochem_tools::eis::{CleanOptions, ImagSignPolicy, clean_file_to};
 use electrochem_tools::eis_io::{read_eis_with_cleaning, write_impedance_csv};
 use electrochem_tools::fit::{
     PartialRqrInit, RqrFitSettings, Weighting, complete_initial_params, fit_rqr,
@@ -24,6 +25,20 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Args, Debug, Clone)]
+struct BatchArgs {
+    #[arg(long)]
+    jobs: Option<usize>,
+    #[arg(long)]
+    fail_fast: bool,
+    #[arg(long)]
+    overwrite: bool,
+    #[arg(long)]
+    resume: bool,
+    #[arg(long, default_value = "result")]
+    out_root: PathBuf,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Validate and clean one or more EIS files using the shared input layer.
@@ -36,12 +51,13 @@ enum Commands {
         imag_sign: ImagSignPolicy,
         #[arg(long)]
         keep_positive_imag: bool,
-        #[arg(long)]
-        out_root: Option<PathBuf>,
+        #[command(flatten)]
+        batch: BatchArgs,
     },
     /// Tikhonov DRT MVP using direct Debye discretization.
     Drt {
-        input: PathBuf,
+        #[arg(short = 'i', long = "input", required = true, num_args = 1..)]
+        input: Vec<PathBuf>,
         #[arg(long, default_value_t = 1.0e-3)]
         lambda: f64,
         #[arg(long)]
@@ -76,12 +92,13 @@ enum Commands {
         compare_matlab_drt: Option<PathBuf>,
         #[arg(long)]
         compare_matlab_regression: Option<PathBuf>,
-        #[arg(long)]
-        out: Option<PathBuf>,
+        #[command(flatten)]
+        batch: BatchArgs,
     },
     /// Equivalent circuit fitting. Currently supports R_QR.
     FitEcm {
-        input: PathBuf,
+        #[arg(short = 'i', long = "input", required = true, num_args = 1..)]
+        input: Vec<PathBuf>,
         #[arg(long)]
         model: String,
         #[arg(long)]
@@ -106,8 +123,8 @@ enum Commands {
         drop_positive_imag: bool,
         #[arg(long)]
         include_correlation_matrix: bool,
-        #[arg(long)]
-        out: Option<PathBuf>,
+        #[command(flatten)]
+        batch: BatchArgs,
     },
 }
 
@@ -171,8 +188,8 @@ fn main() -> Result<()> {
             lenient,
             imag_sign,
             keep_positive_imag,
-            out_root,
-        } => run_clean(input, lenient, imag_sign, keep_positive_imag, out_root),
+            batch,
+        } => run_clean(input, lenient, imag_sign, keep_positive_imag, batch),
         Commands::Drt {
             input,
             lambda,
@@ -192,8 +209,8 @@ fn main() -> Result<()> {
             credible_intervals,
             compare_matlab_drt,
             compare_matlab_regression,
-            out,
-        } => run_drt(
+            batch,
+        } => run_drt_batch(
             input,
             lambda,
             auto_lambda,
@@ -212,7 +229,7 @@ fn main() -> Result<()> {
             credible_intervals,
             compare_matlab_drt,
             compare_matlab_regression,
-            out,
+            batch,
         ),
         Commands::FitEcm {
             input,
@@ -228,8 +245,8 @@ fn main() -> Result<()> {
             flip_imag,
             drop_positive_imag,
             include_correlation_matrix,
-            out,
-        } => run_fit_ecm(
+            batch,
+        } => run_fit_ecm_batch(
             input,
             model,
             rs,
@@ -243,7 +260,7 @@ fn main() -> Result<()> {
             flip_imag,
             drop_positive_imag,
             include_correlation_matrix,
-            out,
+            batch,
         ),
     }
 }
@@ -253,25 +270,149 @@ fn run_clean(
     lenient: bool,
     imag_sign: ImagSignPolicy,
     keep_positive_imag: bool,
-    out_root: Option<PathBuf>,
+    batch: BatchArgs,
 ) -> Result<()> {
-    for input in inputs {
-        let report = clean_file(
-            &input,
+    let options = batch_options(&batch, inputs.len());
+    let report = run_batch(&inputs, &options, |input, output| {
+        clean_file_to(
+            input,
             &CleanOptions {
                 lenient,
                 imag_sign,
                 drop_positive_imag: !keep_positive_imag,
-                out_root: out_root.clone(),
+                out_root: None,
             },
+            output,
         )?;
-        println!(
-            "cleaned {}: read {}, skipped {}, wrote {} points",
-            input.display(),
-            report.input.rows_read,
-            report.input.rows_skipped,
-            report.output_point_count
-        );
+        Ok(())
+    })?;
+    finish_batch(report)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_drt_batch(
+    inputs: Vec<PathBuf>,
+    lambda: f64,
+    auto_lambda: bool,
+    lambda_min: f64,
+    lambda_max: f64,
+    n_lambda: usize,
+    tau_min: Option<f64>,
+    tau_max: Option<f64>,
+    n_tau: usize,
+    tau_grid: TauGridMode,
+    regularization_order: usize,
+    flip_imag: bool,
+    drop_positive_imag: bool,
+    nonnegative: bool,
+    fit_inductance: bool,
+    credible_intervals: bool,
+    compare_matlab_drt: Option<PathBuf>,
+    compare_matlab_regression: Option<PathBuf>,
+    batch: BatchArgs,
+) -> Result<()> {
+    let options = batch_options(&batch, inputs.len());
+    let report = run_batch(&inputs, &options, |input, output| {
+        run_drt(
+            input.to_path_buf(),
+            lambda,
+            auto_lambda,
+            lambda_min,
+            lambda_max,
+            n_lambda,
+            tau_min,
+            tau_max,
+            n_tau,
+            tau_grid,
+            regularization_order,
+            flip_imag,
+            drop_positive_imag,
+            nonnegative,
+            fit_inductance,
+            credible_intervals,
+            compare_matlab_drt.clone(),
+            compare_matlab_regression.clone(),
+            Some(output.to_path_buf()),
+        )
+    })?;
+    finish_batch(report)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_fit_ecm_batch(
+    inputs: Vec<PathBuf>,
+    model: String,
+    rs: Option<f64>,
+    rct: Option<f64>,
+    q: Option<f64>,
+    n: Option<f64>,
+    auto_init: bool,
+    weight: Weighting,
+    max_iter: usize,
+    tol: f64,
+    flip_imag: bool,
+    drop_positive_imag: bool,
+    include_correlation_matrix: bool,
+    batch: BatchArgs,
+) -> Result<()> {
+    let options = batch_options(&batch, inputs.len());
+    let report = run_batch(&inputs, &options, |input, output| {
+        run_fit_ecm(
+            input.to_path_buf(),
+            model.clone(),
+            rs,
+            rct,
+            q,
+            n,
+            auto_init,
+            weight,
+            max_iter,
+            tol,
+            flip_imag,
+            drop_positive_imag,
+            include_correlation_matrix,
+            Some(output.to_path_buf()),
+        )
+    })?;
+    finish_batch(report)
+}
+
+fn batch_options(args: &BatchArgs, input_count: usize) -> BatchOptions {
+    BatchOptions {
+        jobs: args.jobs.unwrap_or_else(|| default_jobs(input_count)),
+        fail_fast: args.fail_fast,
+        overwrite: args.overwrite,
+        resume: args.resume,
+        out_root: args.out_root.clone(),
+    }
+}
+
+fn finish_batch(report: BatchReport) -> Result<()> {
+    for item in &report.items {
+        match item.status {
+            BatchStatus::Success => println!(
+                "ok      {} -> {}",
+                item.input_path.display(),
+                item.output_dir.display()
+            ),
+            BatchStatus::Skipped => println!(
+                "skipped {} -> {}",
+                item.input_path.display(),
+                item.output_dir.display()
+            ),
+            BatchStatus::Failed => eprintln!(
+                "failed  {}: {}",
+                item.input_path.display(),
+                item.error.as_deref().unwrap_or("unknown error")
+            ),
+        }
+    }
+    println!(
+        "batch: {} succeeded, {} failed, {} skipped",
+        report.succeeded, report.failed, report.skipped
+    );
+    if report.failed > 0 {
+        bail!("batch completed with {} failed input(s)", report.failed);
     }
     Ok(())
 }
@@ -459,7 +600,6 @@ fn run_drt(
             serde_json::to_string_pretty(&comparison)?,
         )?;
     }
-    println!("DRT analysis complete: {}", out.display());
     Ok(())
 }
 
@@ -545,8 +685,6 @@ fn run_fit_ecm(
         out.join("fit_params.json"),
         serde_json::to_string_pretty(&summary)?,
     )?;
-    print_fit_summary(&result);
-    println!("ECM fitting complete: {}", out.display());
     Ok(())
 }
 
@@ -570,30 +708,6 @@ fn write_drt_svgs(
     )
 }
 
-fn print_fit_summary(result: &electrochem_tools::fit::RqrFitResult) {
-    let rel = result.parameter_rel_std_error_percent;
-    println!("Fit quality:");
-    println!("  weighted SSE              = {:.3e}", result.weighted_sse);
-    println!(
-        "  mean weighted chi-square  = {:.3e}",
-        result.mean_weighted_chi_square
-    );
-    println!(
-        "  reduced chi-square        = {:.3e}",
-        result.reduced_chi_square
-    );
-    println!(
-        "  relative RMSE             = {:.2} %",
-        result.metrics.relative_rmse_percent
-    );
-    println!();
-    println!("Parameters:");
-    print_param_line("Rs", result.params.rs, "ohm", rel.map(|value| value.rs));
-    print_param_line("R", result.params.rct, "ohm", rel.map(|value| value.rct));
-    print_param_line("Q", result.params.q, "", rel.map(|value| value.q));
-    print_param_line("alpha", result.params.n, "", rel.map(|value| value.n));
-}
-
 fn default_output_dir(input: &std::path::Path, suffix: &str) -> PathBuf {
     let stem = input
         .file_stem()
@@ -605,29 +719,6 @@ fn default_output_dir(input: &std::path::Path, suffix: &str) -> PathBuf {
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or_else(|| std::path::Path::new("."))
         .join(dir_name)
-}
-
-fn print_param_line(name: &str, value: f64, unit: &str, rel_error: Option<f64>) {
-    let unit_text = if unit.is_empty() {
-        String::new()
-    } else {
-        format!(" {unit}")
-    };
-    let rel_text = rel_error
-        .map(|value| format!("{value:.1} %"))
-        .unwrap_or_else(|| "n/a".to_string());
-    println!(
-        "  {name:<7} = {:<12}{unit_text:<8} rel. std. error = {rel_text}",
-        format_compact(value),
-    );
-}
-
-fn format_compact(value: f64) -> String {
-    if value == 0.0 || (value.abs() >= 1.0e-3 && value.abs() < 1.0e4) {
-        format!("{value:.5}")
-    } else {
-        format!("{value:.3e}")
-    }
 }
 
 fn format_matlab_exp(value: f64) -> String {

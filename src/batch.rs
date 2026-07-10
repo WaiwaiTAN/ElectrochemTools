@@ -1,0 +1,176 @@
+use anyhow::{Result, bail};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+#[derive(Debug, Clone)]
+pub struct BatchOptions {
+    pub jobs: usize,
+    pub fail_fast: bool,
+    pub overwrite: bool,
+    pub resume: bool,
+    pub out_root: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BatchStatus {
+    Success,
+    Failed,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchItem {
+    pub input_index: usize,
+    pub input_path: PathBuf,
+    pub output_dir: PathBuf,
+    pub status: BatchStatus,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchReport {
+    pub items: Vec<BatchItem>,
+    pub succeeded: usize,
+    pub failed: usize,
+    pub skipped: usize,
+}
+
+pub fn default_jobs(input_count: usize) -> usize {
+    std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(input_count.max(1))
+}
+
+pub fn run_batch<F>(inputs: &[PathBuf], options: &BatchOptions, processor: F) -> Result<BatchReport>
+where
+    F: Fn(&Path, &Path) -> Result<()> + Sync,
+{
+    if inputs.is_empty() {
+        bail!("batch requires at least one input file");
+    }
+    if options.jobs == 0 {
+        bail!("--jobs must be at least 1");
+    }
+    if options.resume && options.overwrite {
+        bail!("--resume and --overwrite cannot be used together");
+    }
+    fs::create_dir_all(&options.out_root)?;
+    let next = AtomicUsize::new(0);
+    let stop = AtomicBool::new(false);
+    let results: Mutex<Vec<Option<BatchItem>>> = Mutex::new(vec![None; inputs.len()]);
+    let jobs = options.jobs.min(inputs.len());
+
+    std::thread::scope(|scope| {
+        for _ in 0..jobs {
+            scope.spawn(|| {
+                loop {
+                    if options.fail_fast && stop.load(Ordering::Acquire) {
+                        break;
+                    }
+                    let index = next.fetch_add(1, Ordering::AcqRel);
+                    if index >= inputs.len() {
+                        break;
+                    }
+                    let input = &inputs[index];
+                    let output_dir = options.out_root.join(format!("sample_{:03}", index + 1));
+                    let result = prepare_output(&output_dir, options).and_then(|should_run| {
+                        should_run
+                            .then(|| processor(input, &output_dir))
+                            .transpose()
+                    });
+                    let item = match result {
+                        Ok(Some(())) => BatchItem {
+                            input_index: index,
+                            input_path: input.clone(),
+                            output_dir,
+                            status: BatchStatus::Success,
+                            error: None,
+                        },
+                        Ok(None) => BatchItem {
+                            input_index: index,
+                            input_path: input.clone(),
+                            output_dir,
+                            status: BatchStatus::Skipped,
+                            error: None,
+                        },
+                        Err(error) => {
+                            stop.store(true, Ordering::Release);
+                            BatchItem {
+                                input_index: index,
+                                input_path: input.clone(),
+                                output_dir,
+                                status: BatchStatus::Failed,
+                                error: Some(format!("{error:#}")),
+                            }
+                        }
+                    };
+                    results.lock().expect("batch result mutex poisoned")[index] = Some(item);
+                }
+            });
+        }
+    });
+
+    let mut locked = results.into_inner().expect("batch result mutex poisoned");
+    let items = inputs
+        .iter()
+        .enumerate()
+        .map(|(index, input)| {
+            locked[index].take().unwrap_or_else(|| BatchItem {
+                input_index: index,
+                input_path: input.clone(),
+                output_dir: options.out_root.join(format!("sample_{:03}", index + 1)),
+                status: BatchStatus::Skipped,
+                error: Some("not processed because --fail-fast stopped the batch".to_string()),
+            })
+        })
+        .collect::<Vec<_>>();
+    let report = BatchReport {
+        succeeded: items
+            .iter()
+            .filter(|item| item.status == BatchStatus::Success)
+            .count(),
+        failed: items
+            .iter()
+            .filter(|item| item.status == BatchStatus::Failed)
+            .count(),
+        skipped: items
+            .iter()
+            .filter(|item| item.status == BatchStatus::Skipped)
+            .count(),
+        items,
+    };
+    write_batch_summary(&options.out_root.join("batch_summary.csv"), &report)?;
+    Ok(report)
+}
+
+fn prepare_output(output_dir: &Path, options: &BatchOptions) -> Result<bool> {
+    if output_dir.exists() {
+        if options.resume {
+            return Ok(false);
+        }
+        if !options.overwrite {
+            bail!(
+                "output directory {} already exists; use --resume or --overwrite",
+                output_dir.display()
+            );
+        }
+        fs::remove_dir_all(output_dir)?;
+    }
+    fs::create_dir_all(output_dir)?;
+    Ok(true)
+}
+
+fn write_batch_summary(path: &Path, report: &BatchReport) -> Result<()> {
+    let mut writer = csv::Writer::from_path(path)?;
+    writer.write_record(["input_index", "input_path", "output_dir", "status", "error"])?;
+    for item in &report.items {
+        writer.serialize(item)?;
+    }
+    writer.flush()?;
+    Ok(())
+}

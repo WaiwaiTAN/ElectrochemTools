@@ -1,3 +1,4 @@
+pub mod batch;
 pub mod drt;
 pub mod drt_compare;
 pub mod ecm;

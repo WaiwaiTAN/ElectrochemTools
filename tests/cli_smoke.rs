@@ -80,9 +80,33 @@ fn legacy_and_unified_clean_write_identical_data() {
             .success()
     );
     assert_eq!(
-        fs::read(unified.join("sample/cleaned.csv")).unwrap(),
+        fs::read(unified.join("sample_001/cleaned.csv")).unwrap(),
         fs::read(legacy.join("sample/cleaned.csv")).unwrap()
     );
-    assert!(unified.join("sample/input_report.json").is_file());
+    assert!(unified.join("sample_001/input_report.json").is_file());
     assert!(legacy.join("sample/input_report.json").is_file());
+}
+
+#[test]
+fn clean_batch_keeps_successful_outputs_when_one_input_fails() {
+    let root =
+        std::env::temp_dir().join(format!("electrochem_tools_partial_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let good = root.join("含 空格.csv");
+    let bad = root.join("bad.csv");
+    fs::write(&good, "frequency,z_real,z_imag\n100,1,-1\n").unwrap();
+    fs::write(&bad, "frequency,z_real,z_imag\nbroken\n").unwrap();
+    let out = root.join("result");
+    let status = eiscli()
+        .args(["clean", "-i"])
+        .arg(&good)
+        .arg(&bad)
+        .args(["--jobs", "2", "--out-root"])
+        .arg(&out)
+        .status()
+        .unwrap();
+    assert!(!status.success());
+    assert!(out.join("sample_001/cleaned.csv").is_file());
+    assert!(out.join("batch_summary.csv").is_file());
 }
