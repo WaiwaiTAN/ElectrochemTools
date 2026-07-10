@@ -12,6 +12,7 @@ pub struct BatchOptions {
     pub overwrite: bool,
     pub resume: bool,
     pub out_root: PathBuf,
+    pub output_suffix: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,6 +62,27 @@ where
     )
 }
 
+pub fn output_dir_for(input: &Path, options: &BatchOptions) -> Result<PathBuf> {
+    let stem = input
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "input path has no valid UTF-8 file stem: {}",
+                input.display()
+            )
+        })?;
+
+    let logical_stem = stem
+        .strip_suffix("_cleaned")
+        .or_else(|| stem.strip_suffix("-cleaned"))
+        .unwrap_or(stem);
+
+    Ok(options
+        .out_root
+        .join(format!("{logical_stem}_{}", options.output_suffix)))
+}
+
 pub fn run_batch_with_resume<R, F>(
     inputs: &[PathBuf],
     options: &BatchOptions,
@@ -86,6 +108,11 @@ where
     let results: Mutex<Vec<Option<BatchItem>>> = Mutex::new(vec![None; inputs.len()]);
     let jobs = options.jobs.min(inputs.len());
 
+    let output_dirs = inputs
+        .iter()
+        .map(|input| output_dir_for(input, options))
+        .collect::<Result<Vec<_>>>()?;
+
     std::thread::scope(|scope| {
         for _ in 0..jobs {
             scope.spawn(|| {
@@ -98,7 +125,7 @@ where
                         break;
                     }
                     let input = &inputs[index];
-                    let output_dir = options.out_root.join(format!("sample_{:03}", index + 1));
+                    let output_dir = output_dirs[index].clone();
                     let result = prepare_output(input, &output_dir, options, &resume_validator)
                         .and_then(|should_run| {
                             should_run
@@ -145,7 +172,7 @@ where
             locked[index].take().unwrap_or_else(|| BatchItem {
                 input_index: index,
                 input_path: input.clone(),
-                output_dir: options.out_root.join(format!("sample_{:03}", index + 1)),
+                output_dir: options.out_root.join(output_dirs[index].file_name().unwrap()),
                 status: BatchStatus::NotProcessed,
                 error: Some("not processed because --fail-fast stopped the batch".to_string()),
             })
@@ -210,7 +237,6 @@ where
 
 fn write_batch_summary(path: &Path, report: &BatchReport) -> Result<()> {
     let mut writer = csv::Writer::from_path(path)?;
-    writer.write_record(["input_index", "input_path", "output_dir", "status", "error"])?;
     for item in &report.items {
         writer.serialize(item)?;
     }

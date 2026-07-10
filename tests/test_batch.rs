@@ -23,6 +23,7 @@ fn run(jobs: usize, root: PathBuf) -> Vec<String> {
             overwrite: false,
             resume: false,
             out_root: root,
+            output_suffix: "".to_string(),
         },
         |input, output| {
             fs::write(output.join("value.txt"), input.to_string_lossy().as_bytes())?;
@@ -59,6 +60,7 @@ fn a_failed_file_does_not_discard_other_results() {
             overwrite: false,
             resume: false,
             out_root: root.clone(),
+            output_suffix: "".to_string(),
         },
         |input, output| {
             if input == std::path::Path::new("broken") {

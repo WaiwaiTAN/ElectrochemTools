@@ -44,8 +44,8 @@ struct BatchArgs {
     overwrite: bool,
     #[arg(long)]
     resume: bool,
-    #[arg(long, default_value = "result")]
-    out_root: PathBuf,
+    #[arg(long)]
+    out_root: Option<PathBuf>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -56,8 +56,8 @@ struct CleanBatchArgs {
     fail_fast: bool,
     #[arg(long)]
     overwrite: bool,
-    #[arg(long, default_value = "result")]
-    out_root: PathBuf,
+    #[arg(long)]
+    out_root: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -316,7 +316,8 @@ fn run_clean(
         fail_fast: batch.fail_fast,
         overwrite: batch.overwrite,
         resume: false,
-        out_root: batch.out_root,
+        out_root: batch.out_root.ok_or_else(|| anyhow::anyhow!("output root not specified"))?,
+        output_suffix: "_cleaned".to_string(),
     };
     let report = run_batch(&inputs, &options, |input, output| {
         clean_file_to(
@@ -360,7 +361,7 @@ fn run_drt_batch(
     compare_matlab_regression: Option<PathBuf>,
     batch: BatchArgs,
 ) -> Result<()> {
-    let options = batch_options(&batch, inputs.len());
+    let options = batch_options(&batch, "drt", inputs.len());
     let configuration = json!({
         "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": drop_positive_imag},
         "lambda": lambda, "auto_lambda": auto_lambda, "lambda_min": lambda_min,
@@ -432,7 +433,7 @@ fn run_fit_ecm_batch(
     include_correlation_matrix: bool,
     batch: BatchArgs,
 ) -> Result<()> {
-    let options = batch_options(&batch, inputs.len());
+    let options = batch_options(&batch, "fit_ecm", inputs.len());
     let configuration = json!({
         "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": drop_positive_imag},
         "model": model, "initial": {"rs": rs, "rct": rct, "q": q, "n": n},
@@ -472,13 +473,14 @@ fn run_fit_ecm_batch(
     finish_batch(report)
 }
 
-fn batch_options(args: &BatchArgs, input_count: usize) -> BatchOptions {
+fn batch_options(args: &BatchArgs, process_type: &str, input_count: usize) -> BatchOptions {
     BatchOptions {
         jobs: args.jobs.unwrap_or_else(|| default_jobs(input_count)),
         fail_fast: args.fail_fast,
         overwrite: args.overwrite,
         resume: args.resume,
-        out_root: args.out_root.clone(),
+        out_root: args.out_root.clone().unwrap_or_else(|| PathBuf::from("")),
+        output_suffix: process_type.to_string(),
     }
 }
 
