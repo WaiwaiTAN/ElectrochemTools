@@ -1,16 +1,16 @@
-use ElectrochemTools::drt::{DrtSettings, TauGridMode, scan_lambda, solve_drt};
-use ElectrochemTools::drt_compare::compare_with_matlab_outputs;
-use ElectrochemTools::ecm::RqrParams;
-use ElectrochemTools::eis_io::{read_eis_with_cleaning, write_impedance_csv};
-use ElectrochemTools::fit::{
-    PartialRqrInit, RqrFitSettings, Weighting, complete_initial_params, fit_rqr,
-};
-use ElectrochemTools::plot::{write_drt_gamma_svg, write_nyquist_svg};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
+use electrochem_tools::drt::{DrtSettings, TauGridMode, scan_lambda, solve_drt};
+use electrochem_tools::drt_compare::compare_with_matlab_outputs;
+use electrochem_tools::ecm::RqrParams;
+use electrochem_tools::eis_io::{read_eis_with_cleaning, write_impedance_csv};
+use electrochem_tools::fit::{
+    PartialRqrInit, RqrFitSettings, Weighting, complete_initial_params, fit_rqr,
+};
+use electrochem_tools::plot::{write_drt_gamma_svg, write_nyquist_svg};
 use serde::Serialize;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -227,6 +227,7 @@ fn main() -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_drt(
     input: PathBuf,
     lambda: f64,
@@ -430,7 +431,7 @@ fn run_fit_ecm(
     include_correlation_matrix: bool,
     out: Option<PathBuf>,
 ) -> Result<()> {
-    if model.to_ascii_uppercase() != "R_QR" {
+    if !model.eq_ignore_ascii_case("R_QR") {
         bail!("unsupported model '{}'; currently supported: R_QR", model);
     }
 
@@ -501,9 +502,9 @@ fn run_fit_ecm(
 }
 
 fn write_drt_svgs(
-    out: &PathBuf,
-    data: &ElectrochemTools::types::EisData,
-    result: &ElectrochemTools::drt::DrtResult,
+    out: &Path,
+    data: &electrochem_tools::types::EisData,
+    result: &electrochem_tools::drt::DrtResult,
 ) -> Result<()> {
     write_drt_gamma_svg(
         &out.join("drt_gamma.svg"),
@@ -520,7 +521,7 @@ fn write_drt_svgs(
     )
 }
 
-fn print_fit_summary(result: &ElectrochemTools::fit::RqrFitResult) {
+fn print_fit_summary(result: &electrochem_tools::fit::RqrFitResult) {
     let rel = result.parameter_rel_std_error_percent;
     println!("Fit quality:");
     println!("  weighted SSE              = {:.3e}", result.weighted_sse);

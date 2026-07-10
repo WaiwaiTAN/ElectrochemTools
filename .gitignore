@@ -1,8 +1,11 @@
 /target
-/examples
 add_tools.md
 .vscode
 /DRTtools
-/tests
-/result
-/scripts
+/result/
+/target/matlab_reference/
+/examples/eis_drt/
+/examples/eis_ecm/
+/examples/*.svg
+/examples/*.par
+*.tmp

@@ -98,9 +98,9 @@ pub fn calculate_fit_metrics(exp: &EisData, z_fit: &[Complex<f64>]) -> Result<Fi
         ss_complex += dr * dr + di * di;
         ss_reference += re * re + im * im;
     }
-    let rmse_real = (ss_re / n as f64).sqrt();
-    let rmse_imag = (ss_im / n as f64).sqrt();
-    let rmse_magnitude = (ss_complex / n as f64).sqrt();
+    let rmse_real = (ss_re / n).sqrt();
+    let rmse_imag = (ss_im / n).sqrt();
+    let rmse_magnitude = (ss_complex / n).sqrt();
 
     // dimensionless relative RMSE
     let relative_rmse = if ss_reference > 0.0 {

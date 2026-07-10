@@ -1,7 +1,10 @@
 use clap::Parser;
 use regex::Regex;
 use std::io::{self, Write};
+use std::sync::LazyLock;
 use std::{fs, fs::File, path::Path, path::PathBuf};
+
+static COMMA_SEPARATOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r",\s*").unwrap());
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -90,11 +93,7 @@ fn extract_and_validate_data(
     params: &ExperimentParams,
 ) -> (Vec<String>, Vec<String>) {
     let total_points = data_lines.len();
-    let start_index = if total_points > n_keep {
-        total_points - n_keep
-    } else {
-        0
-    };
+    let start_index = total_points.saturating_sub(n_keep);
     let mut warnings = Vec::new();
 
     // 提取首尾电压值
@@ -178,8 +177,7 @@ fn parse_parameters(lines: &[&str]) -> ExperimentParams {
                 let exp_info = &line[exp_info_start + 8..];
 
                 // 使用正则表达式按逗号分割字符串（考虑可能的空格）
-                let re = Regex::new(r",\s*").unwrap(); // 匹配逗号及后续空格
-                let parts: Vec<&str> = re.split(exp_info).collect();
+                let parts: Vec<&str> = COMMA_SEPARATOR.split(exp_info).collect();
 
                 for part in parts {
                     let part = part.trim(); // 去除两端空白
@@ -212,14 +210,13 @@ fn parse_parameters(lines: &[&str]) -> ExperimentParams {
                         {
                             params.voltage_step1 = value.trim().parse().unwrap_or_default();
                         }
-                    } else if part.starts_with("Step2 E(V):") {
-                        if let Some(value) = part
+                    } else if part.starts_with("Step2 E(V):")
+                        && let Some(value) = part
                             .split(':')
                             .nth(1)
                             .and_then(|s| s.split_whitespace().next())
-                        {
-                            params.voltage_step2 = value.trim().parse().unwrap_or_default();
-                        }
+                    {
+                        params.voltage_step2 = value.trim().parse().unwrap_or_default();
                     }
                 }
             }

@@ -144,6 +144,7 @@ pub fn write_xy_svg(
     write_svg(path, title, x_label, y_label, series, x_axis, y_axis, false)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_svg(
     path: &Path,
     title: &str,

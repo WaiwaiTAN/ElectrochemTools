@@ -390,6 +390,7 @@ fn build_imag_system(data: &EisData, tau: &[f64]) -> (DMatrix<f64>, DVector<f64>
     (a, b)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn estimate_drt_credible_intervals(
     a: &DMatrix<f64>,
     b: &DVector<f64>,

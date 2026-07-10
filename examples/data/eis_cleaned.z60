@@ -1,0 +1,34 @@
+﻿Z60W Data File: Version 1.1
+CorrTest for Windows: SN CS310X24051086  V6.5.1230.3  V3.8.240408.1
+Sweep Frequency: Control Voltage
+Date:12-2-2025   Time:20:37:00
+Comment
+ExpParmas:ExpType=ID_EISVSFRQ&-&AttenualSet=0&-&IsEReject=True&-&IsIReject=True&-&RejectMode=0&-&Tran_Frq_H=1000&-&Tran_Frq_L=10&-&Init_Fre=100000&-&Final_Fre=0.1&-&Range_High=3&-&Range_Mid=5&-&Range_Low=5&-&Range_AutoEn=1&-&Range_Min=3&-&Mode=1&-&Filter_H=1&-&Filter_M=2&-&Filter_L=3&-&Filter_Fre=10&-&ADS_EN=1&-&ADS_Fre=200&-&Filter_AutoEn=0&-&Integral_Auto=1&-&Integral_Time=1&-&Integral_Period=1&-&IsAutoDelayTime=True&-&DelayTime=500&-&TenTwice=10&-&SineAmp=10&-&SineBias=0.6&-&IsLine=False&-&VsOcp=vsRef&-&ParamsType=1&-&FreSlopeK=1&-&CheckSineAmp=0&-&TestPoints=0&-&DeductWire=False&-&PotGain=0&-&CurrentGain=0&-&PotGain2=0&-&CurrentGain2=0&-&Tran_Frq1=1000000&-&Tran_Frq2=100000&-&Tran_Frq3=10000&-&Tran_Frq4=100&-&Tran_Frq5=10&-&Tran_Frq6=1&-&Filter_1=1&-&Filter_2=2&-&Filter_3=3&-&Filter_4=5&-&Filter_5=5&-&Filter_6=5&-&Filter_7=5&-&AutoMinRange1=3&-&AutoMinRange2=3&-&AutoMinRange3=3&-&AutoMinRange4=6&-&AutoMinRange5=6&-&AutoMinRange6=8&-&AutoMinRange7=8&-&ManageRange1=2&-&ManageRange2=3&-&ManageRange3=3&-&ManageRange4=5&-&ManageRange5=6&-&ManageRange6=6&-&ManageRange7=6&-&FileName=C:\Users\17711\Desktop\CS Data\Z TAN HgHgO\12Fe_Bulk_1MKOH_1202\eis.z60&-&FilePath=C:\Users\17711\Desktop\CS Data\Z TAN HgHgO\12Fe_Bulk_1MKOH_1202\eis.z60&-&Comment=&-&IsFrq=True&-&SampleInter=0.01&-&SampleFrq=100&-&Number=0&-&EnableAxisType=False&-&AxisType=EIvsTime&-&OcpValue=0.510117828845978&-&IsStopEvent=False&-&Frq=5&-&ExpTime=0&-&DevParam=VoltRange=2&|&EnableWaitSecond=False&|&IsWaitSecond=False&|&WaitSecondEx=5&|&IsCurrAutoRange=True&|&IsVoltAutoRange=True&|&OnlyInc=True&|&AutoMinCurrRange=6&|&OnlyIncE=True&|&AutoMinVoltRange=4&|&IsIR=False&|&IrModeEx=0&|&IrValue=100&|&IsVoltRule=True&|&IsCurrRule=True&|&XiaoboqiEnable=True&|&Xianboqi=True&|&ManualCurRange=3&|&FilterCap=3&|&IsContainsUnit=False&|&LowFilter=True&|&OneKHzFilter=True&|&DigitalSmoothModeEx=0&|&DigitLPFCount=5&|&LineFre=0&|&IsIgnoreFre=False&|&OcpState=False&|&DeltaMaxOcp=10&|&WEMode=0&|&GroundingMode=1&|&IsLowSpeedFilter=False&|&IsEnableCY=False&|&OutputMode=0&|&OutputTime=100&-&CellParam=Area=1&|&AreaMode=0&|&Density=7.8&|&Dangliang=28&|&Type=0&|&REValue=0&|&Temp=25&|&Stern=26&|&Enable=True&|&IsGetTemp=False&|&EnableSpeed=False&|&RotatingSpeed=3200&-&ExpType=ID_EISVSFRQ&-&Issampling=True&-&EnablePause=False&-&EnablePolar=True&-&Cycles=1&-&DefaultE=0&-&DefaultI=0,ExpInfo:DC Potential(V):0.6,Amplitude(mV):10,Initial Frequency:100000,Final Frequency:0.1,Points:60
+Surface Area:           1
+Density:                7.8
+Weight:                 28
+Freq(Hz)	Z'(Ohm.cm²)	Z''(Ohm.cm²)	GD	Err	Range
+End Comments
+3.48637E+01	3.55871E+00	-5.57229E-01	0.00000E+00	0	0
+2.75853E+01	3.76433E+00	-1.11210E+00	0.00000E+00	0	0
+2.18265E+01	4.10044E+00	-1.58359E+00	0.00000E+00	0	0
+1.72698E+01	4.55024E+00	-1.88474E+00	0.00000E+00	0	0
+1.36645E+01	5.07211E+00	-2.03843E+00	0.00000E+00	0	0
+1.08118E+01	5.51816E+00	-2.03278E+00	0.00000E+00	0	0
+8.55467E+00	6.12535E+00	-1.87372E+00	0.00000E+00	0	0
+6.76875E+00	6.49774E+00	-1.72747E+00	0.00000E+00	0	0
+5.35567E+00	6.79734E+00	-1.52995E+00	0.00000E+00	0	0
+4.23759E+00	6.73983E+00	-1.34478E+00	0.00000E+00	0	0
+3.35292E+00	7.17550E+00	-1.05596E+00	0.00000E+00	0	0
+2.65295E+00	7.30405E+00	-8.12463E-01	0.00000E+00	0	0
+2.09910E+00	7.38635E+00	-6.73713E-01	0.00000E+00	0	0
+1.66088E+00	7.49703E+00	-5.74366E-01	0.00000E+00	0	0
+1.31415E+00	7.56908E+00	-4.28504E-01	0.00000E+00	0	0
+1.03980E+00	7.62358E+00	-2.99763E-01	0.00000E+00	0	0
+8.22724E-01	7.64557E+00	-2.63682E-01	0.00000E+00	0	0
+6.50968E-01	7.69978E+00	-2.39998E-01	0.00000E+00	0	0
+5.15068E-01	7.74769E+00	-1.66544E-01	0.00000E+00	0	0
+4.07539E-01	7.80199E+00	-1.40106E-01	0.00000E+00	0	0
+3.22459E-01	7.84085E+00	-1.10387E-01	0.00000E+00	0	0
+2.55141E-01	7.91513E+00	-7.05746E-02	0.00000E+00	0	0
+2.01876E-01	7.98608E+00	-3.35222E-02	0.00000E+00	0	0

@@ -170,7 +170,7 @@ fn main() -> Result<()> {
         bail!("错误: 没有有效的输入文件");
     }
 
-    files_info.sort_by(|a, b| a.1.cmp(&b.1));
+    files_info.sort_by_key(|entry| entry.1);
     let (base_file, base_time) = &files_info[0];
     println!("基础文件: {}, 测试时间: {}", base_file.display(), base_time);
 

@@ -3,6 +3,9 @@ name = "ElectrochemTools"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "electrochem_tools"
+
 [dependencies]
 anyhow = "1.0.98"
 calamine = "0.28.0"

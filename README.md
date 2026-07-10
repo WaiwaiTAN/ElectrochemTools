@@ -2,6 +2,8 @@
 
 A collection of command-line tools for processing electrochemical workstation data, with native support for CorrTest file formats (`.cor` for CV, OCP, i-t, E-t tests and `.z60` for EIS tests).
 
+The audited implementation status and known numerical limitations are recorded in [`docs/current-status.md`](docs/current-status.md).
+
 ## Tools
 
 | Tool | Description |
@@ -92,15 +94,15 @@ Z = Rs + 1 / (1/Rct + Q(j omega)^n)
 Examples:
 
 ```bash
-eiscli drt input.csv --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100
-eiscli drt eis.z60 --drop-positive-imag --auto-lambda --nonnegative --credible-intervals
-eiscli drt eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative
-eiscli drt eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative --fit-inductance
-eiscli drt eis.z60 --drop-positive-imag --tau-grid drttools \
-  --compare-matlab-drt eis_clean_matlab_drttools_drt_peaks.csv \
-  --compare-matlab-regression eis_clean_matlab_drttools_eis_regression.txt
-eiscli fit-ecm input.csv --model R_QR --out result/ --rs 0.5 --rct 20 --q 1e-3 --n 0.85
-eiscli fit-ecm eis.z60 --model R_QR --auto-init --drop-positive-imag --include-correlation-matrix
+eiscli drt examples/data/eis_cleaned.csv --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100
+eiscli drt examples/data/eis.z60 --drop-positive-imag --auto-lambda --nonnegative --credible-intervals
+eiscli drt examples/data/eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative
+eiscli drt examples/data/eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative --fit-inductance
+eiscli drt examples/data/eis.z60 --drop-positive-imag --tau-grid drttools \
+  --compare-matlab-drt tests/golden/drttools/eis_clean_matlab_drttools_drt_peaks.csv \
+  --compare-matlab-regression tests/golden/drttools/eis_clean_matlab_drttools_eis_regression.txt
+eiscli fit-ecm examples/data/eis_cleaned.csv --model R_QR --out result/ --rs 0.5 --rct 20 --q 1e-3 --n 0.85
+eiscli fit-ecm examples/data/eis.z60 --model R_QR --auto-init --drop-positive-imag --include-correlation-matrix
 ```
 
 If `--out` is omitted, output is written next to the input file using a tool-specific folder name. For example, `eis.z60` writes DRT files to `eis_drt/` and ECM fitting files to `eis_ecm/`.
@@ -108,8 +110,8 @@ If `--out` is omitted, output is written next to the input file using a tool-spe
 Development examples:
 
 ```bash
-cargo run --release --bin eiscli -- drt input.csv --lambda 1e-3 --out result/
-cargo run --release --bin eiscli -- fit-ecm input.csv --model R_QR --auto-init --out result/
+cargo run --release --bin eiscli -- drt examples/data/eis_cleaned.csv --lambda 1e-3 --out result/
+cargo run --release --bin eiscli -- fit-ecm examples/data/eis_cleaned.csv --model R_QR --auto-init --out result/
 ```
 
 DRT outputs:
@@ -137,7 +139,7 @@ Use `--fit-inductance` to include the DRTtools-style inductance term in the imag
 
 When MATLAB DRTtools export files are available, `--compare-matlab-drt` and `--compare-matlab-regression` produce `matlab_comparison.json` with gamma and reconstructed-impedance RMSE values. This is a diagnostic comparison, not an assertion that both tools should match exactly.
 
-For local MATLAB reference generation without opening the DRTtools GUI, run `scripts/run_drttools_reference.m` in MATLAB batch mode from the repository root. It reads `examples/eis_cleaned.csv` by default and writes DRTtools-compatible files under `target/matlab_reference/`; the script checks for `quadprog` / Optimization Toolbox before solving.
+For local MATLAB reference generation without opening the DRTtools GUI, run `scripts/run_drttools_reference.m` in MATLAB batch mode from the repository root. It reads `examples/data/eis_cleaned.csv` by default and writes DRTtools-compatible files under `target/matlab_reference/`; the script checks for `quadprog` / Optimization Toolbox before solving. The currently committed exports are diagnostic fixtures only and do not establish matrix-level parity.
 
 ECM fitting outputs:
 
