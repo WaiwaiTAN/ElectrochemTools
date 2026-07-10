@@ -10,3 +10,5 @@ All notable changes to this project will be documented here. The project follows
 - Added reproducible example-data, fixture, and golden-reference directory structure.
 - Added Windows and Linux continuous integration for formatting, Clippy, tests, and release builds.
 - Added baseline CLI smoke tests and documented the audited numerical limitations.
+- Added a metadata-preserving EIS spectrum model with strict parsing and structured lenient-mode diagnostics.
+- Added `eiscli clean`; the legacy `clean_eis` binary now delegates to the same library implementation.

@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use electrochem_tools::drt::{DrtSettings, TauGridMode, scan_lambda, solve_drt};
 use electrochem_tools::drt_compare::compare_with_matlab_outputs;
 use electrochem_tools::ecm::RqrParams;
+use electrochem_tools::eis::{CleanOptions, ImagSignPolicy, clean_file};
 use electrochem_tools::eis_io::{read_eis_with_cleaning, write_impedance_csv};
 use electrochem_tools::fit::{
     PartialRqrInit, RqrFitSettings, Weighting, complete_initial_params, fit_rqr,
@@ -25,6 +26,19 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Validate and clean one or more EIS files using the shared input layer.
+    Clean {
+        #[arg(short = 'i', long = "input", required = true, num_args = 1..)]
+        input: Vec<PathBuf>,
+        #[arg(long)]
+        lenient: bool,
+        #[arg(long, value_enum, default_value_t = ImagSignPolicy::Preserve)]
+        imag_sign: ImagSignPolicy,
+        #[arg(long)]
+        keep_positive_imag: bool,
+        #[arg(long)]
+        out_root: Option<PathBuf>,
+    },
     /// Tikhonov DRT MVP using direct Debye discretization.
     Drt {
         input: PathBuf,
@@ -152,6 +166,13 @@ struct FitParamsSummary {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Commands::Clean {
+            input,
+            lenient,
+            imag_sign,
+            keep_positive_imag,
+            out_root,
+        } => run_clean(input, lenient, imag_sign, keep_positive_imag, out_root),
         Commands::Drt {
             input,
             lambda,
@@ -225,6 +246,34 @@ fn main() -> Result<()> {
             out,
         ),
     }
+}
+
+fn run_clean(
+    inputs: Vec<PathBuf>,
+    lenient: bool,
+    imag_sign: ImagSignPolicy,
+    keep_positive_imag: bool,
+    out_root: Option<PathBuf>,
+) -> Result<()> {
+    for input in inputs {
+        let report = clean_file(
+            &input,
+            &CleanOptions {
+                lenient,
+                imag_sign,
+                drop_positive_imag: !keep_positive_imag,
+                out_root: out_root.clone(),
+            },
+        )?;
+        println!(
+            "cleaned {}: read {}, skipped {}, wrote {} points",
+            input.display(),
+            report.input.rows_read,
+            report.input.rows_skipped,
+            report.output_point_count
+        );
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

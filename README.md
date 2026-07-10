@@ -61,6 +61,7 @@ Subcommands:
 |---------|-------------|
 | `eiscli drt` | Tikhonov DRT MVP using direct Debye discretization |
 | `eiscli fit-ecm` | Equivalent circuit fitting, currently `R_QR` |
+| `eiscli clean` | Strict shared EIS validation and cleaning for one or more files |
 
 Input should contain impedance columns equivalent to:
 
@@ -71,6 +72,12 @@ frequency,Z_real,Z_imag
 Header names such as `freq`, `frequency_hz`, `Freq(Hz)`, `Zreal`, `Z'`, `ReZ`, `Zimag`, `Z''`, `ImZ`, and CorrTest `Zr` / `Izr` are detected even when they appear after CorrTest metadata. Headerless CSV files are also supported; the first three numeric columns are interpreted as `frequency`, `Z_real`, and `Z_imag`, matching the CSV output from `clean_eis`.
 
 Frequencies are sorted from high to low after reading. The imaginary impedance sign is preserved; use `--flip-imag` only when the input convention is known to be inverted. Use `--drop-positive-imag` to apply the same positive-imaginary filtering style as `clean_eis` while reading raw `.z60` directly.
+
+The shared reader is strict by default: malformed rows, non-finite values, non-positive frequencies, duplicate frequencies, missing columns, and ambiguous columns are errors. `eiscli clean --lenient` skips invalid rows and records counts by reason in `input_report.json`. Sign conversion is explicit through `--imag-sign preserve|flip|negative-capacitive|positive-capacitive`.
+
+```bash
+eiscli clean -i examples/data/eis.z60 --out-root result
+```
 
 DRT model:
 
