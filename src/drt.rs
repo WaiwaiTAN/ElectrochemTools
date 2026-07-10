@@ -1,11 +1,16 @@
-use crate::regularization::{
-    solve_tikhonov_active_set_with_penalty, solve_tikhonov_general_with_penalty,
-};
+pub mod kernel;
+pub mod regularization;
+pub mod solver;
+
 use crate::types::{EisData, FitMetrics, calculate_fit_metrics};
 use anyhow::{Result, bail};
+use kernel::{assemble_combined_system, assemble_imag_system, assemble_real_system};
+pub use kernel::{delta_ln_tau, reconstruct_impedance, reconstruct_impedance_with_inductance};
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex;
+use regularization::piecewise_linear_penalty;
 use serde::Serialize;
+use solver::solve_coefficients;
 use std::f64::consts::PI;
 
 #[derive(Debug, Clone, Copy, Serialize, clap::ValueEnum)]
@@ -171,24 +176,9 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
     let n_tau = tau.len();
     let n_unpenalized = if settings.fit_inductance { 2 } else { 1 };
     let gamma_offset = n_unpenalized;
-    let (a, b) = build_drt_system(data, &tau, settings.fit_inductance);
-    let penalty =
-        drttools_piecewise_linear_penalty(&tau, settings.regularization_order, n_unpenalized)?;
-
-    let x = if settings.nonnegative {
-        let lower_bound_zero = vec![true; n_unpenalized + n_tau];
-        solve_tikhonov_active_set_with_penalty(
-            &a,
-            &b,
-            settings.lambda,
-            &penalty,
-            &lower_bound_zero,
-            1_000,
-            1.0e-9,
-        )?
-    } else {
-        solve_tikhonov_general_with_penalty(&a, &b, settings.lambda, &penalty)?
-    };
+    let (a, b) = assemble_combined_system(data, &tau, settings.fit_inductance);
+    let penalty = piecewise_linear_penalty(&tau, settings.regularization_order, n_unpenalized)?;
+    let x = solve_coefficients(&a, &b, settings.lambda, &penalty, settings.nonnegative)?;
     let (inductance, r_inf) = if settings.fit_inductance {
         (x[0], x[1])
     } else {
@@ -322,74 +312,6 @@ pub fn detect_drt_peaks(tau: &[f64], gamma: &[f64], min_relative_height: f64) ->
     peaks
 }
 
-fn build_drt_system(
-    data: &EisData,
-    tau: &[f64],
-    fit_inductance: bool,
-) -> (DMatrix<f64>, DVector<f64>) {
-    let delta_ln_tau = delta_ln_tau(tau);
-    let n_points = data.len();
-    let n_tau = tau.len();
-    let n_unpenalized = if fit_inductance { 2 } else { 1 };
-    let gamma_offset = n_unpenalized;
-    let r_col = if fit_inductance { 1 } else { 0 };
-    let mut a = DMatrix::<f64>::zeros(2 * n_points, n_tau + n_unpenalized);
-    let mut b = DVector::<f64>::zeros(2 * n_points);
-
-    for (i, (&freq, (&z_re, &z_im))) in data
-        .frequency_hz
-        .iter()
-        .zip(data.z_real.iter().zip(&data.z_imag))
-        .enumerate()
-    {
-        let omega = 2.0 * PI * freq;
-        a[(i, r_col)] = 1.0;
-        if fit_inductance {
-            a[(i + n_points, 0)] = omega;
-        }
-        b[i] = z_re;
-        b[i + n_points] = z_im;
-        for (k, (&tau_k, &dln)) in tau.iter().zip(&delta_ln_tau).enumerate() {
-            let wt = omega * tau_k;
-            let denom = 1.0 + wt * wt;
-            a[(i, k + gamma_offset)] = dln / denom;
-            a[(i + n_points, k + gamma_offset)] = -dln * wt / denom;
-        }
-    }
-    (a, b)
-}
-
-fn build_real_system(data: &EisData, tau: &[f64]) -> (DMatrix<f64>, DVector<f64>) {
-    let delta_ln_tau = delta_ln_tau(tau);
-    let mut a = DMatrix::<f64>::zeros(data.len(), tau.len() + 1);
-    let mut b = DVector::<f64>::zeros(data.len());
-    for (i, (&freq, &z_re)) in data.frequency_hz.iter().zip(&data.z_real).enumerate() {
-        let omega = 2.0 * PI * freq;
-        a[(i, 0)] = 1.0;
-        b[i] = z_re;
-        for (k, (&tau_k, &dln)) in tau.iter().zip(&delta_ln_tau).enumerate() {
-            let wt = omega * tau_k;
-            a[(i, k + 1)] = dln / (1.0 + wt * wt);
-        }
-    }
-    (a, b)
-}
-
-fn build_imag_system(data: &EisData, tau: &[f64]) -> (DMatrix<f64>, DVector<f64>) {
-    let delta_ln_tau = delta_ln_tau(tau);
-    let mut a = DMatrix::<f64>::zeros(data.len(), tau.len() + 1);
-    let mut b = DVector::<f64>::zeros(data.len());
-    for (i, (&freq, &z_im)) in data.frequency_hz.iter().zip(&data.z_imag).enumerate() {
-        let omega = 2.0 * PI * freq;
-        b[i] = z_im;
-        for (k, (&tau_k, &dln)) in tau.iter().zip(&delta_ln_tau).enumerate() {
-            let wt = omega * tau_k;
-            a[(i, k + 1)] = -dln * wt / (1.0 + wt * wt);
-        }
-    }
-    (a, b)
-}
-
 #[allow(clippy::too_many_arguments)]
 fn estimate_drt_credible_intervals(
     a: &DMatrix<f64>,
@@ -436,11 +358,11 @@ pub fn estimate_kk_consistency(
     lambda: f64,
     order: usize,
 ) -> Result<KkConsistencyResult> {
-    let (a_re, b_re) = build_real_system(data, tau);
-    let (a_im, b_im) = build_imag_system(data, tau);
-    let penalty = drttools_piecewise_linear_penalty(tau, order, 1)?;
-    let x_re = solve_tikhonov_general_with_penalty(&a_re, &b_re, lambda, &penalty)?;
-    let x_im = solve_tikhonov_general_with_penalty(&a_im, &b_im, lambda, &penalty)?;
+    let (a_re, b_re) = assemble_real_system(data, tau);
+    let (a_im, b_im) = assemble_imag_system(data, tau);
+    let penalty = piecewise_linear_penalty(tau, order, 1)?;
+    let x_re = solve_coefficients(&a_re, &b_re, lambda, &penalty, false)?;
+    let x_im = solve_coefficients(&a_im, &b_im, lambda, &penalty, false)?;
     let gamma_re: Vec<f64> = x_re.iter().skip(1).copied().collect();
     let gamma_im: Vec<f64> = x_im.iter().skip(1).copied().collect();
 
@@ -511,116 +433,4 @@ fn polarization_resistance(tau: &[f64], gamma: &[f64]) -> f64 {
         .zip(delta)
         .map(|(&gamma, dln)| gamma * dln)
         .sum()
-}
-
-fn drttools_piecewise_linear_penalty(
-    tau: &[f64],
-    order: usize,
-    n_unpenalized: usize,
-) -> Result<DMatrix<f64>> {
-    let n_gamma = tau.len();
-    let n_params = n_gamma + n_unpenalized;
-    let rows = match order {
-        0 => n_gamma,
-        1 => {
-            if n_gamma < 2 {
-                bail!("first-order regularization requires at least two gamma values");
-            }
-            n_gamma - 1
-        }
-        2 => {
-            if n_gamma < 3 {
-                bail!("second-order regularization requires at least three gamma values");
-            }
-            n_gamma - 2
-        }
-        _ => bail!("regularization order must be 0, 1, or 2"),
-    };
-    let mut l = DMatrix::<f64>::zeros(rows, n_params);
-    match order {
-        0 => {
-            for row in 0..n_gamma {
-                l[(row, row + n_unpenalized)] = 1.0;
-            }
-        }
-        1 => {
-            for row in 0..(n_gamma - 1) {
-                let delta = (tau[row + 1] / tau[row]).ln();
-                if delta <= 0.0 || !delta.is_finite() {
-                    bail!("tau grid must be strictly increasing for DRT regularization");
-                }
-                l[(row, row + n_unpenalized)] = -1.0 / delta;
-                l[(row, row + n_unpenalized + 1)] = 1.0 / delta;
-            }
-        }
-        2 => {
-            for row in 0..(n_gamma - 2) {
-                let delta = (tau[row + 1] / tau[row]).ln();
-                if delta <= 0.0 || !delta.is_finite() {
-                    bail!("tau grid must be strictly increasing for DRT regularization");
-                }
-                let scale = if row == 0 || row + 1 == n_gamma - 2 {
-                    2.0 / (delta * delta)
-                } else {
-                    1.0 / (delta * delta)
-                };
-                l[(row, row + n_unpenalized)] = scale;
-                l[(row, row + n_unpenalized + 1)] = -2.0 * scale;
-                l[(row, row + n_unpenalized + 2)] = scale;
-            }
-        }
-        _ => unreachable!(),
-    }
-    Ok(l.transpose() * l)
-}
-
-pub fn reconstruct_impedance(
-    frequency_hz: &[f64],
-    r_inf: f64,
-    tau: &[f64],
-    gamma: &[f64],
-) -> Vec<Complex<f64>> {
-    reconstruct_impedance_with_inductance(frequency_hz, r_inf, 0.0, tau, gamma)
-}
-
-pub fn reconstruct_impedance_with_inductance(
-    frequency_hz: &[f64],
-    r_inf: f64,
-    inductance: f64,
-    tau: &[f64],
-    gamma: &[f64],
-) -> Vec<Complex<f64>> {
-    let delta = delta_ln_tau(tau);
-    frequency_hz
-        .iter()
-        .map(|&freq| {
-            let omega = 2.0 * PI * freq;
-            tau.iter().zip(gamma).zip(&delta).fold(
-                Complex::new(r_inf, omega * inductance),
-                |acc, ((&tau_k, &gamma_k), &dln)| {
-                    let wt = omega * tau_k;
-                    let denom = 1.0 + wt * wt;
-                    acc + Complex::new(gamma_k * dln / denom, -gamma_k * dln * wt / denom)
-                },
-            )
-        })
-        .collect()
-}
-
-pub fn delta_ln_tau(tau: &[f64]) -> Vec<f64> {
-    if tau.len() < 2 {
-        return vec![1.0; tau.len()];
-    }
-    let logs: Vec<f64> = tau.iter().map(|value| value.ln()).collect();
-    (0..tau.len())
-        .map(|idx| {
-            if idx == 0 {
-                0.5 * (logs[1] - logs[0])
-            } else if idx + 1 == tau.len() {
-                0.5 * (logs[idx] - logs[idx - 1])
-            } else {
-                0.5 * (logs[idx + 1] - logs[idx - 1])
-            }
-        })
-        .collect()
 }
