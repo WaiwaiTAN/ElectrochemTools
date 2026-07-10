@@ -51,6 +51,7 @@ fn solve(data: &EisData, fit_inductance: bool, lambda: f64) -> DrtResult {
             regularization_order: 1,
             nonnegative: true,
             credible_intervals: false,
+            solver: Default::default(),
         },
     )
     .unwrap()

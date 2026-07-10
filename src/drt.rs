@@ -2,6 +2,7 @@ pub mod kernel;
 pub mod regularization;
 pub mod solver;
 
+pub use crate::regularization::SolverReport;
 use crate::types::{EisData, FitMetrics, calculate_fit_metrics};
 use anyhow::{Result, bail};
 use kernel::{assemble_combined_system, assemble_imag_system, assemble_real_system};
@@ -11,6 +12,7 @@ use num_complex::Complex;
 use regularization::piecewise_linear_penalty;
 use serde::Serialize;
 use solver::solve_coefficients;
+pub use solver::{DrtConstraintConfig, DrtSolverOptions};
 use std::f64::consts::PI;
 
 #[derive(Debug, Clone, Copy, Serialize, clap::ValueEnum)]
@@ -31,6 +33,7 @@ pub struct DrtSettings {
     pub regularization_order: usize,
     pub nonnegative: bool,
     pub credible_intervals: bool,
+    pub solver: DrtSolverOptions,
 }
 
 #[derive(Debug, Clone)]
@@ -46,6 +49,7 @@ pub struct DrtResult {
     pub peaks: Vec<DrtPeak>,
     pub credible_intervals: Option<DrtCredibleIntervals>,
     pub kk: KkConsistencyResult,
+    pub solver_report: SolverReport,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -59,6 +63,9 @@ pub struct DrtSettingsUsed {
     pub regularization_order: usize,
     pub nonnegative: bool,
     pub credible_intervals: bool,
+    pub solver_max_iterations: usize,
+    pub solver_tolerance: f64,
+    pub constraints: DrtConstraintConfig,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -178,7 +185,16 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
     let gamma_offset = n_unpenalized;
     let (a, b) = assemble_combined_system(data, &tau, settings.fit_inductance);
     let penalty = piecewise_linear_penalty(&tau, settings.regularization_order, n_unpenalized)?;
-    let x = solve_coefficients(&a, &b, settings.lambda, &penalty, settings.nonnegative)?;
+    let solution = solve_coefficients(
+        &a,
+        &b,
+        settings.lambda,
+        &penalty,
+        settings.nonnegative,
+        settings.fit_inductance,
+        settings.solver,
+    )?;
+    let x = solution.coefficients;
     let (inductance, r_inf) = if settings.fit_inductance {
         (x[0], x[1])
     } else {
@@ -223,6 +239,9 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
             regularization_order: settings.regularization_order,
             nonnegative: settings.nonnegative,
             credible_intervals: settings.credible_intervals,
+            solver_max_iterations: settings.solver.max_iterations,
+            solver_tolerance: settings.solver.tolerance,
+            constraints: settings.solver.constraints,
         },
         metrics,
         polarization_resistance,
@@ -230,6 +249,7 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
         peaks,
         credible_intervals,
         kk,
+        solver_report: solution.report,
     })
 }
 
@@ -361,8 +381,26 @@ pub fn estimate_kk_consistency(
     let (a_re, b_re) = assemble_real_system(data, tau);
     let (a_im, b_im) = assemble_imag_system(data, tau);
     let penalty = piecewise_linear_penalty(tau, order, 1)?;
-    let x_re = solve_coefficients(&a_re, &b_re, lambda, &penalty, false)?;
-    let x_im = solve_coefficients(&a_im, &b_im, lambda, &penalty, false)?;
+    let x_re = solve_coefficients(
+        &a_re,
+        &b_re,
+        lambda,
+        &penalty,
+        false,
+        false,
+        DrtSolverOptions::default(),
+    )?
+    .coefficients;
+    let x_im = solve_coefficients(
+        &a_im,
+        &b_im,
+        lambda,
+        &penalty,
+        false,
+        false,
+        DrtSolverOptions::default(),
+    )?
+    .coefficients;
     let gamma_re: Vec<f64> = x_re.iter().skip(1).copied().collect();
     let gamma_im: Vec<f64> = x_im.iter().skip(1).copied().collect();
 

@@ -18,6 +18,7 @@ fn compares_against_exported_matlab_drttools_files() {
             regularization_order: 1,
             nonnegative: true,
             credible_intervals: false,
+            solver: Default::default(),
         },
     )
     .unwrap();

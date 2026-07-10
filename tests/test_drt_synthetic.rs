@@ -28,6 +28,7 @@ fn drt_recovers_single_debye_peak_location() {
             regularization_order: 1,
             nonnegative: false,
             credible_intervals: true,
+            solver: Default::default(),
         },
     )
     .unwrap();

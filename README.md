@@ -142,7 +142,9 @@ DRT SVG plots use `log10(tau)` internally and label the x-axis at integer decade
 
 For easier comparison with MATLAB DRTtools exports, `--tau-grid drttools` uses `tau = 1 / frequency` as the collocation grid. The default `--tau-grid logspace` keeps using a separately specified or inferred log-spaced grid.
 
-Use `--fit-inductance` to include the DRTtools-style inductance term in the imaginary impedance model. Without this flag, inductance is fixed at zero. In `--nonnegative` mode, the bounded active-set solve uses DRTtools-compatible lower bounds for the fitted inductance, resistance, and gamma coefficients.
+Use `--fit-inductance` to include the DRTtools-style inductance term in the imaginary impedance model. Without this flag, inductance is fixed at zero.
+
+In `--nonnegative` mode constraints are assigned by parameter role: gamma and `R_inf` are nonnegative by default, while inductance is free because signed inductive corrections can be physically meaningful. Use `--allow-negative-r-inf` or `--nonnegative-inductance` to change those roles. `solver_report.json` records convergence, iterations, objective, projected-gradient norm, KKT violation, active constraints, condition estimate, and warnings. A nonconverged solve is an error and does not produce final DRT result files.
 
 When MATLAB DRTtools export files are available, `--compare-matlab-drt` and `--compare-matlab-regression` produce `matlab_comparison.json` with gamma and reconstructed-impedance RMSE values. This is a diagnostic comparison, not an assertion that both tools should match exactly.
 

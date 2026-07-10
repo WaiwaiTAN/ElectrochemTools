@@ -16,3 +16,4 @@ All notable changes to this project will be documented here. The project follows
 - Added deterministic synthetic DRT reference cases for single, separated, overlapping, inductive, noisy, and incomplete spectra.
 - Split deterministic DRT matrix assembly, piecewise-linear regularization, and coefficient solving into focused modules without changing the public solver entry point.
 - Added MATLAB R2023b/DRTtools piecewise-linear matrix golden references with explicit automated tolerances and provenance.
+- Added structured DRT solver diagnostics, convergence failure propagation, and separate gamma, `R_inf`, and inductance constraint configuration.

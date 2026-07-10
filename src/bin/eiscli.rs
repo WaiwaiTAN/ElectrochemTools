@@ -1,7 +1,10 @@
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 use electrochem_tools::batch::{BatchOptions, BatchReport, BatchStatus, default_jobs, run_batch};
-use electrochem_tools::drt::{DrtSettings, TauGridMode, scan_lambda, solve_drt};
+use electrochem_tools::drt::{
+    DrtConstraintConfig, DrtSettings, DrtSolverOptions, SolverReport, TauGridMode, scan_lambda,
+    solve_drt,
+};
 use electrochem_tools::drt_compare::compare_with_matlab_outputs;
 use electrochem_tools::ecm::RqrParams;
 use electrochem_tools::eis::{CleanOptions, ImagSignPolicy, clean_file_to};
@@ -88,6 +91,14 @@ enum Commands {
         fit_inductance: bool,
         #[arg(long)]
         credible_intervals: bool,
+        #[arg(long, default_value_t = 1_000)]
+        solver_max_iterations: usize,
+        #[arg(long, default_value_t = 1.0e-9)]
+        solver_tolerance: f64,
+        #[arg(long)]
+        allow_negative_r_inf: bool,
+        #[arg(long)]
+        nonnegative_inductance: bool,
         #[arg(long)]
         compare_matlab_drt: Option<PathBuf>,
         #[arg(long)]
@@ -153,6 +164,8 @@ struct DrtSummary {
     inductance_std: Option<f64>,
     r_inf_std: Option<f64>,
     note: String,
+    solver: SolverReport,
+    constraints: DrtConstraintConfig,
 }
 
 #[derive(Serialize)]
@@ -207,6 +220,10 @@ fn main() -> Result<()> {
             nonnegative,
             fit_inductance,
             credible_intervals,
+            solver_max_iterations,
+            solver_tolerance,
+            allow_negative_r_inf,
+            nonnegative_inductance,
             compare_matlab_drt,
             compare_matlab_regression,
             batch,
@@ -227,6 +244,10 @@ fn main() -> Result<()> {
             nonnegative,
             fit_inductance,
             credible_intervals,
+            solver_max_iterations,
+            solver_tolerance,
+            allow_negative_r_inf,
+            nonnegative_inductance,
             compare_matlab_drt,
             compare_matlab_regression,
             batch,
@@ -307,6 +328,10 @@ fn run_drt_batch(
     nonnegative: bool,
     fit_inductance: bool,
     credible_intervals: bool,
+    solver_max_iterations: usize,
+    solver_tolerance: f64,
+    allow_negative_r_inf: bool,
+    nonnegative_inductance: bool,
     compare_matlab_drt: Option<PathBuf>,
     compare_matlab_regression: Option<PathBuf>,
     batch: BatchArgs,
@@ -330,6 +355,10 @@ fn run_drt_batch(
             nonnegative,
             fit_inductance,
             credible_intervals,
+            solver_max_iterations,
+            solver_tolerance,
+            allow_negative_r_inf,
+            nonnegative_inductance,
             compare_matlab_drt.clone(),
             compare_matlab_regression.clone(),
             Some(output.to_path_buf()),
@@ -435,6 +464,10 @@ fn run_drt(
     nonnegative: bool,
     fit_inductance: bool,
     credible_intervals: bool,
+    solver_max_iterations: usize,
+    solver_tolerance: f64,
+    allow_negative_r_inf: bool,
+    nonnegative_inductance: bool,
     compare_matlab_drt: Option<PathBuf>,
     compare_matlab_regression: Option<PathBuf>,
     out: Option<PathBuf>,
@@ -457,6 +490,15 @@ fn run_drt(
         regularization_order,
         nonnegative,
         credible_intervals,
+        solver: DrtSolverOptions {
+            max_iterations: solver_max_iterations,
+            tolerance: solver_tolerance,
+            constraints: DrtConstraintConfig {
+                gamma_nonnegative: true,
+                r_inf_nonnegative: !allow_negative_r_inf,
+                inductance_nonnegative: nonnegative_inductance,
+            },
+        },
     };
 
     if auto_lambda {
@@ -583,10 +625,16 @@ fn run_drt(
             "unconstrained Tikhonov DRT; use --nonnegative to enforce bounded nonnegative coefficients"
         }
         .to_string(),
+        solver: result.solver_report.clone(),
+        constraints: result.settings_used.constraints,
     };
     fs::write(
         out.join("residual_summary.json"),
         serde_json::to_string_pretty(&summary)?,
+    )?;
+    fs::write(
+        out.join("solver_report.json"),
+        serde_json::to_string_pretty(&result.solver_report)?,
     )?;
     if compare_matlab_drt.is_some() || compare_matlab_regression.is_some() {
         let comparison = compare_with_matlab_outputs(

@@ -110,3 +110,58 @@ fn clean_batch_keeps_successful_outputs_when_one_input_fails() {
     assert!(out.join("sample_001/cleaned.csv").is_file());
     assert!(out.join("batch_summary.csv").is_file());
 }
+
+#[test]
+fn drt_solver_failure_returns_nonzero_without_final_result() {
+    let out = std::env::temp_dir().join(format!(
+        "electrochem_tools_drt_failure_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&out);
+    let status = eiscli()
+        .args([
+            "drt",
+            "-i",
+            "examples/data/eis_cleaned.csv",
+            "--nonnegative",
+        ])
+        .args([
+            "--n-tau",
+            "30",
+            "--solver-max-iterations",
+            "0",
+            "--out-root",
+        ])
+        .arg(&out)
+        .status()
+        .unwrap();
+    assert!(!status.success());
+    assert!(!out.join("sample_001/gamma.csv").exists());
+    assert!(out.join("batch_summary.csv").is_file());
+}
+
+#[test]
+fn successful_drt_writes_structured_solver_report() {
+    let out = std::env::temp_dir().join(format!(
+        "electrochem_tools_drt_report_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&out);
+    let status = eiscli()
+        .args([
+            "drt",
+            "-i",
+            "examples/data/eis_cleaned.csv",
+            "--nonnegative",
+        ])
+        .args(["--n-tau", "30", "--out-root"])
+        .arg(&out)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("sample_001/solver_report.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["converged"], true);
+    assert!(report["kkt_violation"].is_number());
+}

@@ -1,5 +1,18 @@
 use anyhow::{Context, Result, bail};
 use nalgebra::{DMatrix, DVector};
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SolverReport {
+    pub converged: bool,
+    pub iterations: usize,
+    pub objective: f64,
+    pub projected_gradient_norm: f64,
+    pub kkt_violation: f64,
+    pub active_constraints: usize,
+    pub condition_estimate: Option<f64>,
+    pub warning: Option<String>,
+}
 
 pub fn solve_tikhonov(
     a: &DMatrix<f64>,
@@ -36,6 +49,31 @@ pub fn solve_tikhonov_general_with_penalty(
     let system = a.transpose() * a + penalty.scale(lambda);
     let rhs = a.transpose() * b;
     solve_spd_or_lu(&system, &rhs, "Tikhonov system is singular")
+}
+
+pub fn solve_tikhonov_general_with_penalty_report(
+    a: &DMatrix<f64>,
+    b: &DVector<f64>,
+    lambda: f64,
+    penalty: &DMatrix<f64>,
+) -> Result<(DVector<f64>, SolverReport)> {
+    validate_penalty_inputs(a, b, lambda, penalty)?;
+    let h = a.transpose() * a + penalty.scale(lambda);
+    let g = a.transpose() * b;
+    let solution = solve_spd_or_lu(&h, &g, "Tikhonov system is singular")?;
+    let gradient = &h * &solution - &g;
+    let gradient_norm = gradient.norm();
+    let report = SolverReport {
+        converged: gradient_norm <= 1.0e-7 * g.norm().max(1.0),
+        iterations: 1,
+        objective: objective(&h, &g, &solution),
+        projected_gradient_norm: gradient_norm,
+        kkt_violation: gradient.amax(),
+        active_constraints: 0,
+        condition_estimate: condition_estimate(&h),
+        warning: None,
+    };
+    Ok((solution, report))
 }
 
 pub fn solve_tikhonov_projected_nonnegative(
@@ -147,6 +185,27 @@ pub fn solve_tikhonov_active_set_with_penalty(
     max_iter: usize,
     tol: f64,
 ) -> Result<DVector<f64>> {
+    Ok(solve_tikhonov_active_set_with_penalty_report(
+        a,
+        b,
+        lambda,
+        penalty,
+        lower_bound_zero,
+        max_iter,
+        tol,
+    )?
+    .0)
+}
+
+pub fn solve_tikhonov_active_set_with_penalty_report(
+    a: &DMatrix<f64>,
+    b: &DVector<f64>,
+    lambda: f64,
+    penalty: &DMatrix<f64>,
+    lower_bound_zero: &[bool],
+    max_iter: usize,
+    tol: f64,
+) -> Result<(DVector<f64>, SolverReport)> {
     validate_penalty_inputs(a, b, lambda, penalty)?;
     validate_lower_bounds(a.ncols(), lower_bound_zero)?;
     let h = a.transpose() * a + penalty.scale(lambda);
@@ -168,7 +227,7 @@ pub fn solve_tikhonov_active_set_with_penalty(
         }
     }
 
-    for _ in 0..max_iter {
+    for iteration in 1..=max_iter {
         let free_indices = free
             .iter()
             .enumerate()
@@ -202,11 +261,27 @@ pub fn solve_tikhonov_active_set_with_penalty(
         if let Some(idx) = best_idx {
             free[idx] = true;
         } else {
-            return Ok(x);
+            return Ok((
+                x.clone(),
+                constrained_report(&h, &g, &x, lower_bound_zero, iteration, tol, true, None),
+            ));
         }
     }
-
-    Ok(x)
+    Ok((
+        x.clone(),
+        constrained_report(
+            &h,
+            &g,
+            &x,
+            lower_bound_zero,
+            max_iter,
+            tol,
+            false,
+            Some(format!(
+                "active-set solver reached maximum iterations ({max_iter})"
+            )),
+        ),
+    ))
 }
 
 pub fn penalty_matrix(n_gamma: usize, order: usize) -> Result<DMatrix<f64>> {
@@ -396,6 +471,56 @@ fn project_bounds(x: &mut DVector<f64>, lower_bound_zero: &[bool]) {
 
 fn objective(h: &DMatrix<f64>, g: &DVector<f64>, x: &DVector<f64>) -> f64 {
     0.5 * x.dot(&(h * x)) - g.dot(x)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn constrained_report(
+    h: &DMatrix<f64>,
+    g: &DVector<f64>,
+    x: &DVector<f64>,
+    bounded: &[bool],
+    iterations: usize,
+    tol: f64,
+    algorithm_converged: bool,
+    warning: Option<String>,
+) -> SolverReport {
+    let gradient = h * x - g;
+    let mut projected_squared = 0.0;
+    let mut kkt_violation: f64 = 0.0;
+    let mut active_constraints = 0;
+    for index in 0..x.len() {
+        let active = bounded[index] && x[index] <= tol;
+        let projected = if active {
+            active_constraints += 1;
+            gradient[index].min(0.0)
+        } else {
+            gradient[index]
+        };
+        projected_squared += projected * projected;
+        kkt_violation = kkt_violation.max(projected.abs());
+    }
+    let projected_gradient_norm = projected_squared.sqrt();
+    SolverReport {
+        converged: algorithm_converged && kkt_violation <= tol * g.amax().max(1.0),
+        iterations,
+        objective: objective(h, g, x),
+        projected_gradient_norm,
+        kkt_violation,
+        active_constraints,
+        condition_estimate: condition_estimate(h),
+        warning,
+    }
+}
+
+fn condition_estimate(matrix: &DMatrix<f64>) -> Option<f64> {
+    let singular_values = matrix.clone().svd(false, false).singular_values;
+    let largest = singular_values.iter().copied().fold(0.0_f64, f64::max);
+    let smallest = singular_values
+        .iter()
+        .copied()
+        .filter(|value| *value > largest * f64::EPSILON)
+        .fold(f64::INFINITY, f64::min);
+    (largest.is_finite() && smallest.is_finite() && smallest > 0.0).then_some(largest / smallest)
 }
 
 fn estimate_largest_eigenvalue(matrix: &DMatrix<f64>) -> f64 {
