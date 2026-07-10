@@ -13,3 +13,4 @@ All notable changes to this project will be documented here. The project follows
 - Added a metadata-preserving EIS spectrum model with strict parsing and structured lenient-mode diagnostics.
 - Added `eiscli clean`; the legacy `clean_eis` binary now delegates to the same library implementation.
 - Added a deterministic fixed-size file-level batch runner with `--jobs`, failure isolation, stable output ordering, `--fail-fast`, `--resume`, and `--overwrite`.
+- Added deterministic synthetic DRT reference cases for single, separated, overlapping, inductive, noisy, and incomplete spectra.
