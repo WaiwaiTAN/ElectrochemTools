@@ -2,6 +2,8 @@
 
 A collection of command-line tools for processing electrochemical workstation data, with native support for CorrTest file formats (`.cor` for CV, OCP, i-t, E-t tests and `.z60` for EIS tests).
 
+> **This is not a full DRTtools replacement.** v0.1.0 focuses on reliable EIS input, direct-Debye/piecewise-linear DRT, and `R_QR` fitting.
+
 The audited implementation status and known numerical limitations are recorded in [`docs/current-status.md`](docs/current-status.md).
 
 ## Tools
@@ -17,16 +19,31 @@ The audited implementation status and known numerical limitations are recorded i
 
 ## Installation
 
+### Windows release
+
+Prebuilt v0.1.0 binaries are currently provided for 64-bit Windows using the MSVC toolchain. Download `electrochem-tools-v0.1.0-x86_64-pc-windows-msvc.zip` from the GitHub Release, verify it against `SHA256SUMS.txt`, extract it, and run:
+
+```powershell
+.\eiscli.exe --help
+.\eiscli.exe clean -i data.z60 --out-root result
+.\eiscli.exe drt -i result\sample_001\cleaned.csv --nonnegative --out-root drt-result
+.\eiscli.exe fit-ecm -i result\sample_001\cleaned.csv --model R_QR --auto-init --out-root ecm-result
+```
+
+Each input is assigned a stable `sample_NNN` directory. Cleaning writes `cleaned.csv`, `cleaned.z60`, and `input_report.json`. DRT and ECM write their result files plus `run.json`.
+
 ### Prerequisites
 
 - [Rust](https://www.rust-lang.org/tools/install) (toolchain supporting edition 2024)
 
 ### Build from source
 
+Linux/WSL and macOS users can build from source; v0.1.0 does not claim official prebuilt binaries for those platforms. The core code is designed as cross-platform Rust.
+
 ```bash
 git clone https://github.com/WaiwaiTAN/ElectrochemTools.git
 cd ElectrochemTools
-cargo build --release
+cargo build --locked --release
 ```
 
 Binaries will be placed in `target/release/`.
@@ -112,7 +129,7 @@ eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR --out-root result/ 
 eiscli fit-ecm -i examples/data/eis.z60 --model R_QR --auto-init --drop-positive-imag --include-correlation-matrix
 ```
 
-All file commands accept one or more `-i/--input` paths. Results are assigned deterministically to `sample_001`, `sample_002`, and so on below `--out-root` (default `result`), with a stable `batch_summary.csv`. Use `--jobs 1` for serial execution; the default is the smaller of available logical threads and input count. Existing output directories require either `--resume` or `--overwrite`.
+All file commands accept one or more `-i/--input` paths. Results are assigned deterministically to `sample_001`, `sample_002`, and so on below `--out-root` (default `result`), with a stable `batch_summary.csv`. Use `--jobs 1` for serial execution; the default is the smaller of available logical threads and input count. `clean` requires `--overwrite` for an existing sample directory and never writes `run.json`. For `drt` and `fit-ecm`, `--resume` only skips a successful run whose input SHA-256, numerical configuration SHA-256, command, schema, and declared output files still match; otherwise it refuses to reuse the directory.
 
 Development examples:
 
@@ -168,6 +185,7 @@ Current limitations and TODO:
 - The credible interval output is not the original DRTtools HMC sampler; it is a deterministic Gaussian approximation around the Tikhonov solution.
 - ECM fitting currently supports only `R_QR`; future models can include `Rs-(Q||R)-(Q||R)`, Warburg diffusion, and inductance.
 - `modulus` and `proportional` weighting are equivalent in the current implementation because both scale complex residuals by `1 / |Z_exp|`.
+- v0.1.0 has no RBF DRT, HMC, Bayesian Hilbert Transform, GUI, Python bindings, additional ECM models, or new automatic-lambda algorithm.
 
 Attribution: the DRT implementation in `eiscli` is derived from the algorithmic structure of the open-source MATLAB project [Mycroft2333/DRTtools](https://github.com/Mycroft2333/DRTtools), especially the real/imaginary matrix assembly, Tikhonov regularization, and EIS consistency-score workflow. This Rust CLI is an independent command-line implementation and does not include the DRTtools GUI or an exact reproduction of its RBF/QP/HMC internals.
 

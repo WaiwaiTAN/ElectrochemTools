@@ -210,13 +210,14 @@ fn parse_parameters(lines: &[&str]) -> ExperimentParams {
                         {
                             params.voltage_step1 = value.trim().parse().unwrap_or_default();
                         }
-                    } else if part.starts_with("Step2 E(V):")
-                        && let Some(value) = part
+                    } else if part.starts_with("Step2 E(V):") {
+                        if let Some(value) = part
                             .split(':')
                             .nth(1)
                             .and_then(|s| s.split_whitespace().next())
-                    {
-                        params.voltage_step2 = value.trim().parse().unwrap_or_default();
+                        {
+                            params.voltage_step2 = value.trim().parse().unwrap_or_default();
+                        }
                     }
                 }
             }

@@ -81,12 +81,10 @@ fn read_matlab_drt(path: &Path) -> Result<Vec<MatlabGammaPoint>> {
         }
         let tau = parts[0].parse::<f64>().ok();
         let gamma = parts[1].parse::<f64>().ok();
-        if let (Some(tau), Some(gamma)) = (tau, gamma)
-            && tau.is_finite()
-            && tau > 0.0
-            && gamma.is_finite()
-        {
-            points.push(MatlabGammaPoint { tau, gamma });
+        if let (Some(tau), Some(gamma)) = (tau, gamma) {
+            if tau.is_finite() && tau > 0.0 && gamma.is_finite() {
+                points.push(MatlabGammaPoint { tau, gamma });
+            }
         }
     }
     if points.is_empty() {
@@ -107,16 +105,13 @@ fn read_matlab_regression(path: &Path) -> Result<Vec<MatlabRegressionPoint>> {
         let freq = parts[0].parse::<f64>().ok();
         let re = parts[1].parse::<f64>().ok();
         let im = parts[2].parse::<f64>().ok();
-        if let (Some(freq), Some(re), Some(im)) = (freq, re, im)
-            && freq.is_finite()
-            && freq > 0.0
-            && re.is_finite()
-            && im.is_finite()
-        {
-            points.push(MatlabRegressionPoint {
-                freq,
-                z_fit: Complex::new(re, im),
-            });
+        if let (Some(freq), Some(re), Some(im)) = (freq, re, im) {
+            if freq.is_finite() && freq > 0.0 && re.is_finite() && im.is_finite() {
+                points.push(MatlabRegressionPoint {
+                    freq,
+                    z_fit: Complex::new(re, im),
+                });
+            }
         }
     }
     if points.is_empty() {

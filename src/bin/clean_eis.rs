@@ -28,8 +28,8 @@ fn main() -> Result<()> {
         println!(
             "cleaned {}: read {}, skipped {}, wrote {} points",
             input.display(),
-            report.input.rows_read,
-            report.input.rows_skipped,
+            report.valid_row_count,
+            report.skipped_row_count,
             report.output_point_count
         );
     }

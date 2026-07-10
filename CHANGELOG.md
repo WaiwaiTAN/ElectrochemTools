@@ -1,19 +1,27 @@
 # Changelog
 
-All notable changes to this project will be documented here. The project follows semantic versioning once a stable release process is established.
+## [0.1.0] - 2026-07-10
 
-## Unreleased
+### Added
+
+- Unified strict/lenient EIS input, cleaning diagnostics, stable batch output, direct-Debye/piecewise-linear DRT, and `R_QR` fitting.
+- Order-1/order-2 regularization, bounded active-set constraints, Gaussian interval estimates, and KK cross-reconstruction diagnostics.
+- Matrix-level and three constrained end-to-end MATLAB R2023b/DRTtools golden cases with numerical error thresholds and provenance.
+- Strict SHA-256-based `run.json` resume for DRT and ECM calculations.
+- Reproducible Windows MSVC packaging, checksums, and tag/manual GitHub Actions workflow.
 
 ### Changed
 
-- Repaired repository ignore rules so tests, examples, and reference scripts can be committed.
-- Added reproducible example-data, fixture, and golden-reference directory structure.
-- Added Windows and Linux continuous integration for formatting, Clippy, tests, and release builds.
-- Added baseline CLI smoke tests and documented the audited numerical limitations.
-- Added a metadata-preserving EIS spectrum model with strict parsing and structured lenient-mode diagnostics.
-- Added `eiscli clean`; the legacy `clean_eis` binary now delegates to the same library implementation.
-- Added a deterministic fixed-size file-level batch runner with `--jobs`, failure isolation, stable output ordering, `--fail-fast`, `--resume`, and `--overwrite`.
-- Added deterministic synthetic DRT reference cases for single, separated, overlapping, inductive, noisy, and incomplete spectra.
-- Split deterministic DRT matrix assembly, piecewise-linear regularization, and coefficient solving into focused modules without changing the public solver entry point.
-- Added MATLAB R2023b/DRTtools piecewise-linear matrix golden references with explicit automated tolerances and provenance.
-- Added structured DRT solver diagnostics, convergence failure propagation, and separate gamma, `R_inf`, and inductance constraint configuration.
+- `eiscli clean` no longer accepts `--resume`; it writes `input_report.json` but no computation manifest.
+- Batch summaries distinguish successful, failed, resumed, and not-processed inputs.
+
+### Fixed
+
+- Resume no longer treats an existing output directory as proof of a completed matching calculation.
+- Clean reports now expose source format, cleaning policy, row counts, skip reasons, filtering count, and output files.
+
+### Known limitations
+
+- This is not a full DRTtools replacement: no RBF, HMC, Bayesian HT, or MATLAB GUI.
+- ECM fitting supports only `R_QR`; intervals are Gaussian approximations and KK is a cross-reconstruction proxy.
+- Official v0.1.0 binaries are Windows x86-64 MSVC only.

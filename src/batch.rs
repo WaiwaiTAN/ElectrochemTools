@@ -19,7 +19,8 @@ pub struct BatchOptions {
 pub enum BatchStatus {
     Success,
     Failed,
-    Skipped,
+    Resumed,
+    NotProcessed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +38,8 @@ pub struct BatchReport {
     pub succeeded: usize,
     pub failed: usize,
     pub skipped: usize,
+    pub resumed: usize,
+    pub not_processed: usize,
 }
 
 pub fn default_jobs(input_count: usize) -> usize {
@@ -48,6 +51,24 @@ pub fn default_jobs(input_count: usize) -> usize {
 
 pub fn run_batch<F>(inputs: &[PathBuf], options: &BatchOptions, processor: F) -> Result<BatchReport>
 where
+    F: Fn(&Path, &Path) -> Result<()> + Sync,
+{
+    run_batch_with_resume(
+        inputs,
+        options,
+        |_, _| bail!("resume validation is not configured for this batch"),
+        processor,
+    )
+}
+
+pub fn run_batch_with_resume<R, F>(
+    inputs: &[PathBuf],
+    options: &BatchOptions,
+    resume_validator: R,
+    processor: F,
+) -> Result<BatchReport>
+where
+    R: Fn(&Path, &Path) -> Result<bool> + Sync,
     F: Fn(&Path, &Path) -> Result<()> + Sync,
 {
     if inputs.is_empty() {
@@ -78,11 +99,12 @@ where
                     }
                     let input = &inputs[index];
                     let output_dir = options.out_root.join(format!("sample_{:03}", index + 1));
-                    let result = prepare_output(&output_dir, options).and_then(|should_run| {
-                        should_run
-                            .then(|| processor(input, &output_dir))
-                            .transpose()
-                    });
+                    let result = prepare_output(input, &output_dir, options, &resume_validator)
+                        .and_then(|should_run| {
+                            should_run
+                                .then(|| processor(input, &output_dir))
+                                .transpose()
+                        });
                     let item = match result {
                         Ok(Some(())) => BatchItem {
                             input_index: index,
@@ -95,7 +117,7 @@ where
                             input_index: index,
                             input_path: input.clone(),
                             output_dir,
-                            status: BatchStatus::Skipped,
+                            status: BatchStatus::Resumed,
                             error: None,
                         },
                         Err(error) => {
@@ -124,7 +146,7 @@ where
                 input_index: index,
                 input_path: input.clone(),
                 output_dir: options.out_root.join(format!("sample_{:03}", index + 1)),
-                status: BatchStatus::Skipped,
+                status: BatchStatus::NotProcessed,
                 error: Some("not processed because --fail-fast stopped the batch".to_string()),
             })
         })
@@ -140,7 +162,20 @@ where
             .count(),
         skipped: items
             .iter()
-            .filter(|item| item.status == BatchStatus::Skipped)
+            .filter(|item| {
+                matches!(
+                    item.status,
+                    BatchStatus::Resumed | BatchStatus::NotProcessed
+                )
+            })
+            .count(),
+        resumed: items
+            .iter()
+            .filter(|item| item.status == BatchStatus::Resumed)
+            .count(),
+        not_processed: items
+            .iter()
+            .filter(|item| item.status == BatchStatus::NotProcessed)
             .count(),
         items,
     };
@@ -148,14 +183,22 @@ where
     Ok(report)
 }
 
-fn prepare_output(output_dir: &Path, options: &BatchOptions) -> Result<bool> {
+fn prepare_output<R>(
+    input: &Path,
+    output_dir: &Path,
+    options: &BatchOptions,
+    resume_validator: &R,
+) -> Result<bool>
+where
+    R: Fn(&Path, &Path) -> Result<bool>,
+{
     if output_dir.exists() {
         if options.resume {
-            return Ok(false);
+            return resume_validator(input, output_dir);
         }
         if !options.overwrite {
             bail!(
-                "output directory {} already exists; use --resume or --overwrite",
+                "output directory {} already exists; use --overwrite or choose another --out-root",
                 output_dir.display()
             );
         }

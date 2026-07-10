@@ -1,0 +1,16 @@
+{
+  "lambda": 0.001,
+  "regularization_order": 1,
+  "fit_inductance": false,
+  "constraints": {
+    "gamma_nonnegative": true,
+    "r_inf_nonnegative": true,
+    "inductance_mode": "fixed_zero"
+  },
+  "objective_value": -1067.310284681404,
+  "R_inf": 4.5361833217106984,
+  "inductance": 0,
+  "polarization_resistance": 3.388826831500837,
+  "quadprog_exit_flag": 1,
+  "quadprog_iterations": 7
+}

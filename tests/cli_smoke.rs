@@ -25,12 +25,12 @@ fn drt_help_succeeds() {
 
 #[test]
 fn clean_help_succeeds() {
+    let output = eiscli().args(["clean", "--help"]).output().unwrap();
+    assert!(output.status.success());
     assert!(
-        eiscli()
-            .args(["clean", "--help"])
-            .status()
+        !String::from_utf8(output.stdout)
             .unwrap()
-            .success()
+            .contains("--resume")
     );
 }
 
@@ -84,7 +84,20 @@ fn legacy_and_unified_clean_write_identical_data() {
         fs::read(legacy.join("sample/cleaned.csv")).unwrap()
     );
     assert!(unified.join("sample_001/input_report.json").is_file());
+    assert!(!unified.join("sample_001/run.json").exists());
     assert!(legacy.join("sample/input_report.json").is_file());
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(unified.join("sample_001/input_report.json")).unwrap())
+            .unwrap();
+    assert_eq!(report["input_path"], input.display().to_string());
+    assert_eq!(report["detected_input_format"], "csv");
+    assert_eq!(report["mode"], "strict");
+    assert_eq!(report["imag_sign"], "preserve");
+    assert_eq!(report["drop_positive_imag"], true);
+    assert_eq!(report["original_row_count"], 3);
+    assert_eq!(report["valid_row_count"], 3);
+    assert_eq!(report["removed_positive_imag_count"], 1);
+    assert_eq!(report["output_point_count"], 2);
 }
 
 #[test]
@@ -137,6 +150,10 @@ fn drt_solver_failure_returns_nonzero_without_final_result() {
         .unwrap();
     assert!(!status.success());
     assert!(!out.join("sample_001/gamma.csv").exists());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("sample_001/run.json")).unwrap()).unwrap();
+    assert_eq!(manifest["status"], "failed");
+    assert!(!out.join("sample_001/run.json.tmp").exists());
     assert!(out.join("batch_summary.csv").is_file());
 }
 
@@ -164,4 +181,92 @@ fn successful_drt_writes_structured_solver_report() {
             .unwrap();
     assert_eq!(report["converged"], true);
     assert!(report["kkt_violation"].is_number());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("sample_001/run.json")).unwrap()).unwrap();
+    assert_eq!(manifest["status"], "success");
+    assert_eq!(manifest["command"], "drt");
+    assert!(manifest["input"]["sha256"].as_str().unwrap().len() == 64);
+    assert!(manifest["configuration_sha256"].as_str().unwrap().len() == 64);
+
+    let resumed = eiscli()
+        .args([
+            "drt",
+            "-i",
+            "examples/data/eis_cleaned.csv",
+            "--nonnegative",
+        ])
+        .args(["--n-tau", "30", "--resume", "--out-root"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(resumed.status.success());
+    assert!(
+        String::from_utf8(resumed.stdout)
+            .unwrap()
+            .contains("resumed")
+    );
+
+    let changed = eiscli()
+        .args([
+            "drt",
+            "-i",
+            "examples/data/eis_cleaned.csv",
+            "--nonnegative",
+        ])
+        .args(["--n-tau", "31", "--resume", "--out-root"])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(!changed.status.success());
+    assert!(
+        String::from_utf8(changed.stderr)
+            .unwrap()
+            .contains("configuration differs")
+    );
+    assert!(
+        eiscli()
+            .args([
+                "drt",
+                "-i",
+                "examples/data/eis_cleaned.csv",
+                "--nonnegative",
+            ])
+            .args(["--n-tau", "31", "--overwrite", "--out-root"])
+            .arg(&out)
+            .status()
+            .unwrap()
+            .success()
+    );
+}
+
+#[test]
+fn fit_ecm_writes_and_resumes_success_manifest() {
+    let out = std::env::temp_dir().join(format!(
+        "electrochem_tools_ecm_manifest_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&out);
+    let args = [
+        "fit-ecm",
+        "-i",
+        "examples/data/eis_cleaned.csv",
+        "--model",
+        "R_QR",
+        "--auto-init",
+        "--out-root",
+    ];
+    assert!(eiscli().args(args).arg(&out).status().unwrap().success());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("sample_001/run.json")).unwrap()).unwrap();
+    assert_eq!(manifest["status"], "success");
+    assert_eq!(manifest["command"], "fit-ecm");
+    assert!(
+        eiscli()
+            .args(args)
+            .arg(&out)
+            .arg("--resume")
+            .status()
+            .unwrap()
+            .success()
+    );
 }

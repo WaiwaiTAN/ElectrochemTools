@@ -1,0 +1,13 @@
+{
+  "MATLAB_version": "23.2.0.2668659 (R2023b) Update 9",
+  "Optimization_Toolbox_available": true,
+  "DRTtools_commit": "034d9c4c4a4916a38a0e2f10381d931ffe1981b3",
+  "generation_script": "scripts/regenerate_matlab_golden.m",
+  "generation_timestamp": "2026-07-10T06:40:41Z",
+  "input_fixture": "examples/data/eis_cleaned.csv",
+  "case_configuration": {
+    "name": "real_order2_no_inductance",
+    "order": 2,
+    "fit_inductance": false
+  }
+}

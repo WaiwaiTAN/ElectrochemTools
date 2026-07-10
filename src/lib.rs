@@ -7,4 +7,5 @@ pub mod eis_io;
 pub mod fit;
 pub mod plot;
 pub mod regularization;
+pub mod run_manifest;
 pub mod types;

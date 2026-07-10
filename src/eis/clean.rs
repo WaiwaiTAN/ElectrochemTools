@@ -1,4 +1,4 @@
-use crate::eis::{ImagSignPolicy, ReadOptions, ReadReport, apply_imag_sign, read_spectrum};
+use crate::eis::{EisFormat, ImagSignPolicy, ReadOptions, apply_imag_sign, read_spectrum};
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::fs;
@@ -26,9 +26,15 @@ impl Default for CleanOptions {
 #[derive(Debug, Clone, Serialize)]
 pub struct CleanReport {
     pub input_path: PathBuf,
-    pub input: ReadReport,
+    pub detected_input_format: EisFormat,
+    pub mode: String,
     pub imag_sign: ImagSignPolicy,
     pub drop_positive_imag: bool,
+    pub original_row_count: usize,
+    pub valid_row_count: usize,
+    pub skipped_row_count: usize,
+    pub skipped_by_reason: std::collections::BTreeMap<String, usize>,
+    pub removed_positive_imag_count: usize,
     pub output_point_count: usize,
     pub output_files: Vec<PathBuf>,
 }
@@ -61,7 +67,10 @@ pub fn clean_file_to(
             lenient: options.lenient,
         },
     )?;
+    let detected_input_format = outcome.spectrum.metadata.source_format;
+    let valid_row_count = outcome.spectrum.points.len();
     apply_imag_sign(&mut outcome.spectrum, options.imag_sign);
+    let before_positive_filter = outcome.spectrum.points.len();
     if options.drop_positive_imag {
         outcome
             .spectrum
@@ -81,9 +90,15 @@ pub fn clean_file_to(
     let report_path = output_dir.join("input_report.json");
     let report = CleanReport {
         input_path: input.to_path_buf(),
-        input: outcome.report,
+        detected_input_format,
+        mode: if options.lenient { "lenient" } else { "strict" }.to_string(),
         imag_sign: options.imag_sign,
         drop_positive_imag: options.drop_positive_imag,
+        original_row_count: outcome.report.total_rows,
+        valid_row_count,
+        skipped_row_count: outcome.report.rows_skipped,
+        skipped_by_reason: outcome.report.skipped_by_reason,
+        removed_positive_imag_count: before_positive_filter - outcome.spectrum.points.len(),
         output_point_count: outcome.spectrum.points.len(),
         output_files: vec![csv_path, tsv_path, report_path.clone()],
     };

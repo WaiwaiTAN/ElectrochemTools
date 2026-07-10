@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
-use electrochem_tools::batch::{BatchOptions, BatchReport, BatchStatus, default_jobs, run_batch};
+use electrochem_tools::batch::{
+    BatchOptions, BatchReport, BatchStatus, default_jobs, run_batch, run_batch_with_resume,
+};
 use electrochem_tools::drt::{
     DrtConstraintConfig, DrtSettings, DrtSolverOptions, SolverReport, TauGridMode, scan_lambda,
     solve_drt,
@@ -13,7 +15,11 @@ use electrochem_tools::fit::{
     PartialRqrInit, RqrFitSettings, Weighting, complete_initial_params, fit_rqr,
 };
 use electrochem_tools::plot::{write_drt_gamma_svg, write_nyquist_svg};
+use electrochem_tools::run_manifest::{
+    RunManifest, collect_output_files, execute_manifested, verify_resume,
+};
 use serde::Serialize;
+use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -42,6 +48,18 @@ struct BatchArgs {
     out_root: PathBuf,
 }
 
+#[derive(Args, Debug, Clone)]
+struct CleanBatchArgs {
+    #[arg(long)]
+    jobs: Option<usize>,
+    #[arg(long)]
+    fail_fast: bool,
+    #[arg(long)]
+    overwrite: bool,
+    #[arg(long, default_value = "result")]
+    out_root: PathBuf,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Validate and clean one or more EIS files using the shared input layer.
@@ -55,7 +73,7 @@ enum Commands {
         #[arg(long)]
         keep_positive_imag: bool,
         #[command(flatten)]
-        batch: BatchArgs,
+        batch: CleanBatchArgs,
     },
     /// Tikhonov DRT MVP using direct Debye discretization.
     Drt {
@@ -291,9 +309,15 @@ fn run_clean(
     lenient: bool,
     imag_sign: ImagSignPolicy,
     keep_positive_imag: bool,
-    batch: BatchArgs,
+    batch: CleanBatchArgs,
 ) -> Result<()> {
-    let options = batch_options(&batch, inputs.len());
+    let options = BatchOptions {
+        jobs: batch.jobs.unwrap_or_else(|| default_jobs(inputs.len())),
+        fail_fast: batch.fail_fast,
+        overwrite: batch.overwrite,
+        resume: false,
+        out_root: batch.out_root,
+    };
     let report = run_batch(&inputs, &options, |input, output| {
         clean_file_to(
             input,
@@ -337,33 +361,57 @@ fn run_drt_batch(
     batch: BatchArgs,
 ) -> Result<()> {
     let options = batch_options(&batch, inputs.len());
-    let report = run_batch(&inputs, &options, |input, output| {
-        run_drt(
-            input.to_path_buf(),
-            lambda,
-            auto_lambda,
-            lambda_min,
-            lambda_max,
-            n_lambda,
-            tau_min,
-            tau_max,
-            n_tau,
-            tau_grid,
-            regularization_order,
-            flip_imag,
-            drop_positive_imag,
-            nonnegative,
-            fit_inductance,
-            credible_intervals,
-            solver_max_iterations,
-            solver_tolerance,
-            allow_negative_r_inf,
-            nonnegative_inductance,
-            compare_matlab_drt.clone(),
-            compare_matlab_regression.clone(),
-            Some(output.to_path_buf()),
-        )
-    })?;
+    let configuration = json!({
+        "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": drop_positive_imag},
+        "lambda": lambda, "auto_lambda": auto_lambda, "lambda_min": lambda_min,
+        "lambda_max": lambda_max, "n_lambda": n_lambda,
+        "tau_min": tau_min, "tau_max": tau_max, "n_tau": n_tau, "tau_grid": tau_grid,
+        "regularization_order": regularization_order, "nonnegative": nonnegative,
+        "fit_inductance": fit_inductance, "credible_intervals": credible_intervals,
+        "solver_max_iterations": solver_max_iterations, "solver_tolerance": solver_tolerance,
+        "constraints": {"gamma_nonnegative": true, "r_inf_nonnegative": !allow_negative_r_inf,
+            "inductance_nonnegative": nonnegative_inductance},
+        "compare_matlab_drt": compare_matlab_drt, "compare_matlab_regression": compare_matlab_regression,
+    });
+    let report = run_batch_with_resume(
+        &inputs,
+        &options,
+        |input, output| {
+            let expected = RunManifest::new("drt", input, configuration.clone())?;
+            verify_resume(output, &expected)
+        },
+        |input, output| {
+            let manifest = RunManifest::new("drt", input, configuration.clone())?;
+            execute_manifested(output, manifest, || {
+                run_drt(
+                    input.to_path_buf(),
+                    lambda,
+                    auto_lambda,
+                    lambda_min,
+                    lambda_max,
+                    n_lambda,
+                    tau_min,
+                    tau_max,
+                    n_tau,
+                    tau_grid,
+                    regularization_order,
+                    flip_imag,
+                    drop_positive_imag,
+                    nonnegative,
+                    fit_inductance,
+                    credible_intervals,
+                    solver_max_iterations,
+                    solver_tolerance,
+                    allow_negative_r_inf,
+                    nonnegative_inductance,
+                    compare_matlab_drt.clone(),
+                    compare_matlab_regression.clone(),
+                    Some(output.to_path_buf()),
+                )?;
+                collect_output_files(output)
+            })
+        },
+    )?;
     finish_batch(report)
 }
 
@@ -385,24 +433,42 @@ fn run_fit_ecm_batch(
     batch: BatchArgs,
 ) -> Result<()> {
     let options = batch_options(&batch, inputs.len());
-    let report = run_batch(&inputs, &options, |input, output| {
-        run_fit_ecm(
-            input.to_path_buf(),
-            model.clone(),
-            rs,
-            rct,
-            q,
-            n,
-            auto_init,
-            weight,
-            max_iter,
-            tol,
-            flip_imag,
-            drop_positive_imag,
-            include_correlation_matrix,
-            Some(output.to_path_buf()),
-        )
-    })?;
+    let configuration = json!({
+        "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": drop_positive_imag},
+        "model": model, "initial": {"rs": rs, "rct": rct, "q": q, "n": n},
+        "auto_init": auto_init, "weight": weight, "max_iterations": max_iter,
+        "tolerance": tol, "include_correlation_matrix": include_correlation_matrix,
+    });
+    let report = run_batch_with_resume(
+        &inputs,
+        &options,
+        |input, output| {
+            let expected = RunManifest::new("fit-ecm", input, configuration.clone())?;
+            verify_resume(output, &expected)
+        },
+        |input, output| {
+            let manifest = RunManifest::new("fit-ecm", input, configuration.clone())?;
+            execute_manifested(output, manifest, || {
+                run_fit_ecm(
+                    input.to_path_buf(),
+                    model.clone(),
+                    rs,
+                    rct,
+                    q,
+                    n,
+                    auto_init,
+                    weight,
+                    max_iter,
+                    tol,
+                    flip_imag,
+                    drop_positive_imag,
+                    include_correlation_matrix,
+                    Some(output.to_path_buf()),
+                )?;
+                collect_output_files(output)
+            })
+        },
+    )?;
     finish_batch(report)
 }
 
@@ -424,8 +490,13 @@ fn finish_batch(report: BatchReport) -> Result<()> {
                 item.input_path.display(),
                 item.output_dir.display()
             ),
-            BatchStatus::Skipped => println!(
-                "skipped {} -> {}",
+            BatchStatus::Resumed => println!(
+                "resumed {} -> {}",
+                item.input_path.display(),
+                item.output_dir.display()
+            ),
+            BatchStatus::NotProcessed => println!(
+                "not processed {} -> {}",
                 item.input_path.display(),
                 item.output_dir.display()
             ),
@@ -437,8 +508,8 @@ fn finish_batch(report: BatchReport) -> Result<()> {
         }
     }
     println!(
-        "batch: {} succeeded, {} failed, {} skipped",
-        report.succeeded, report.failed, report.skipped
+        "batch: {} succeeded, {} failed, {} resumed, {} not processed",
+        report.succeeded, report.failed, report.resumed, report.not_processed
     );
     if report.failed > 0 {
         bail!("batch completed with {} failed input(s)", report.failed);
