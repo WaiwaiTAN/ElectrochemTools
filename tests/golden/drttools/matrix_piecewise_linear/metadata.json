@@ -1,0 +1,9 @@
+{
+  "matlab_version": "23.2.0.2668659 (R2023b) Update 9",
+  "drttools_commit": "034d9c4c4a4916a38a0e2f10381d931ffe1981b3",
+  "rbf_type": "Piecewise linear",
+  "lambda": 0.001,
+  "fit_inductance": true,
+  "regularization_order": 1,
+  "generated_at": "2026-07-10T01:45:03Z"
+}
