@@ -2,7 +2,6 @@ use clap::Parser;
 use regex::Regex;
 use std::io::{self, Write};
 use std::{fs, fs::File, path::Path, path::PathBuf};
-use regex::Regex;
 
 #[derive(Parser, Debug)]
 struct Args {

@@ -95,6 +95,7 @@ Examples:
 eiscli drt input.csv --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100
 eiscli drt eis.z60 --drop-positive-imag --auto-lambda --nonnegative --credible-intervals
 eiscli drt eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative
+eiscli drt eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative --fit-inductance
 eiscli drt eis.z60 --drop-positive-imag --tau-grid drttools \
   --compare-matlab-drt eis_clean_matlab_drttools_drt_peaks.csv \
   --compare-matlab-regression eis_clean_matlab_drttools_eis_regression.txt
@@ -132,7 +133,11 @@ DRT SVG plots use `log10(tau)` internally and label the x-axis at integer decade
 
 For easier comparison with MATLAB DRTtools exports, `--tau-grid drttools` uses `tau = 1 / frequency` as the collocation grid. The default `--tau-grid logspace` keeps using a separately specified or inferred log-spaced grid.
 
+Use `--fit-inductance` to include the DRTtools-style inductance term in the imaginary impedance model. Without this flag, inductance is fixed at zero. In `--nonnegative` mode, the bounded active-set solve uses DRTtools-compatible lower bounds for the fitted inductance, resistance, and gamma coefficients.
+
 When MATLAB DRTtools export files are available, `--compare-matlab-drt` and `--compare-matlab-regression` produce `matlab_comparison.json` with gamma and reconstructed-impedance RMSE values. This is a diagnostic comparison, not an assertion that both tools should match exactly.
+
+For local MATLAB reference generation without opening the DRTtools GUI, run `scripts/run_drttools_reference.m` in MATLAB batch mode from the repository root. It reads `examples/eis_cleaned.csv` by default and writes DRTtools-compatible files under `target/matlab_reference/`; the script checks for `quadprog` / Optimization Toolbox before solving.
 
 ECM fitting outputs:
 
@@ -146,8 +151,8 @@ After successful `fit-ecm`, the CLI prints fit quality and parameter estimates t
 
 Current limitations and TODO:
 
-- DRT is currently a direct Debye discretization implementation, not a full reproduction of the DRTtools RBF method.
-- DRT supports an approximate projected-gradient `--nonnegative` mode, but not DRTtools' full bounded quadratic-programming solver.
+- DRT is currently a direct Debye / piecewise-linear discretization implementation, not a full reproduction of every DRTtools RBF mode.
+- DRT supports a bounded active-set `--nonnegative` mode for the Tikhonov problem, but not DRTtools' MATLAB `quadprog` backend itself.
 - DRT supports `--auto-lambda` scanning, local peak detection, linear-Gaussian credible intervals, and a DRT-based Hilbert/Kramers-Kronig consistency proxy.
 - The credible interval output is not the original DRTtools HMC sampler; it is a deterministic Gaussian approximation around the Tikhonov solution.
 - ECM fitting currently supports only `R_QR`; future models can include `Rs-(Q||R)-(Q||R)`, Warburg diffusion, and inductance.

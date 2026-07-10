@@ -55,6 +55,8 @@ enum Commands {
         #[arg(long)]
         nonnegative: bool,
         #[arg(long)]
+        fit_inductance: bool,
+        #[arg(long)]
         credible_intervals: bool,
         #[arg(long)]
         compare_matlab_drt: Option<PathBuf>,
@@ -102,6 +104,7 @@ struct DrtSummary {
     tau_max: f64,
     n_tau: usize,
     tau_grid: TauGridMode,
+    fit_inductance: bool,
     regularization_order: usize,
     nonnegative: bool,
     n_points: usize,
@@ -116,6 +119,7 @@ struct DrtSummary {
     kk_imag_to_real_relative_rmse_percent: f64,
     kk_mean_score: f64,
     credible_intervals: bool,
+    inductance_std: Option<f64>,
     r_inf_std: Option<f64>,
     note: String,
 }
@@ -163,6 +167,7 @@ fn main() -> Result<()> {
             flip_imag,
             drop_positive_imag,
             nonnegative,
+            fit_inductance,
             credible_intervals,
             compare_matlab_drt,
             compare_matlab_regression,
@@ -182,6 +187,7 @@ fn main() -> Result<()> {
             flip_imag,
             drop_positive_imag,
             nonnegative,
+            fit_inductance,
             credible_intervals,
             compare_matlab_drt,
             compare_matlab_regression,
@@ -236,6 +242,7 @@ fn run_drt(
     flip_imag: bool,
     drop_positive_imag: bool,
     nonnegative: bool,
+    fit_inductance: bool,
     credible_intervals: bool,
     compare_matlab_drt: Option<PathBuf>,
     compare_matlab_regression: Option<PathBuf>,
@@ -255,6 +262,7 @@ fn run_drt(
         tau_max,
         n_tau,
         tau_grid,
+        fit_inductance,
         regularization_order,
         nonnegative,
         credible_intervals,
@@ -351,6 +359,7 @@ fn run_drt(
         tau_max: result.settings_used.tau_max,
         n_tau: result.settings_used.n_tau,
         tau_grid: result.settings_used.tau_grid,
+        fit_inductance: result.settings_used.fit_inductance,
         regularization_order: result.settings_used.regularization_order,
         nonnegative: result.settings_used.nonnegative,
         n_points: data.len(),
@@ -369,14 +378,18 @@ fn run_drt(
             .imag_to_real_relative_rmse_percent,
         kk_mean_score: result.kk.mean_score,
         credible_intervals: result.settings_used.credible_intervals,
+        inductance_std: result
+            .credible_intervals
+            .as_ref()
+            .and_then(|intervals| intervals.inductance_std),
         r_inf_std: result
             .credible_intervals
             .as_ref()
             .map(|intervals| intervals.r_inf_std),
         note: if result.settings_used.nonnegative {
-            "projected-gradient nonnegative Tikhonov DRT; credible intervals are a linear-Gaussian approximation when requested"
+            "bounded active-set nonnegative Tikhonov DRT; credible intervals are a linear-Gaussian approximation when requested"
         } else {
-            "unconstrained Tikhonov DRT; use --nonnegative to enforce gamma >= 0 approximately"
+            "unconstrained Tikhonov DRT; use --nonnegative to enforce bounded nonnegative coefficients"
         }
         .to_string(),
     };
