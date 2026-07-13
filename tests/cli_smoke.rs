@@ -36,13 +36,11 @@ fn clean_help_succeeds() {
 
 #[test]
 fn fit_ecm_help_succeeds() {
-    assert!(
-        eiscli()
-            .args(["fit-ecm", "--help"])
-            .status()
-            .unwrap()
-            .success()
-    );
+    let output = eiscli().args(["fit-ecm", "--help"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("--r2"));
+    assert!(stdout.contains("--warburg-sigma"));
 }
 
 #[test]
@@ -80,15 +78,16 @@ fn legacy_and_unified_clean_write_identical_data() {
             .success()
     );
     assert_eq!(
-        fs::read(unified.join("sample_001/cleaned.csv")).unwrap(),
+        fs::read(unified.join("sample_cleaned/cleaned.csv")).unwrap(),
         fs::read(legacy.join("sample/cleaned.csv")).unwrap()
     );
-    assert!(unified.join("sample_001/input_report.json").is_file());
-    assert!(!unified.join("sample_001/run.json").exists());
+    assert!(unified.join("sample_cleaned/input_report.json").is_file());
+    assert!(!unified.join("sample_cleaned/run.json").exists());
     assert!(legacy.join("sample/input_report.json").is_file());
-    let report: serde_json::Value =
-        serde_json::from_slice(&fs::read(unified.join("sample_001/input_report.json")).unwrap())
-            .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(
+        &fs::read(unified.join("sample_cleaned/input_report.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(report["input_path"], input.display().to_string());
     assert_eq!(report["detected_input_format"], "csv");
     assert_eq!(report["mode"], "strict");
@@ -120,7 +119,7 @@ fn clean_batch_keeps_successful_outputs_when_one_input_fails() {
         .status()
         .unwrap();
     assert!(!status.success());
-    assert!(out.join("sample_001/cleaned.csv").is_file());
+    assert!(out.join("含 空格_cleaned/cleaned.csv").is_file());
     assert!(out.join("batch_summary.csv").is_file());
 }
 
@@ -149,12 +148,41 @@ fn drt_solver_failure_returns_nonzero_without_final_result() {
         .status()
         .unwrap();
     assert!(!status.success());
-    assert!(!out.join("sample_001/gamma.csv").exists());
+    assert!(!out.join("eis_drt/gamma.csv").exists());
     let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(out.join("sample_001/run.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(out.join("eis_drt/run.json")).unwrap()).unwrap();
     assert_eq!(manifest["status"], "failed");
-    assert!(!out.join("sample_001/run.json.tmp").exists());
+    assert!(!out.join("eis_drt/run.json.tmp").exists());
     assert!(out.join("batch_summary.csv").is_file());
+}
+
+#[test]
+fn fit_ecm_accepts_parenthesized_rc_warburg_model() {
+    let out =
+        std::env::temp_dir().join(format!("electrochem_tools_ecm_rc_w_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&out);
+    assert!(
+        eiscli()
+            .args([
+                "fit-ecm",
+                "-i",
+                "examples/data/eis_cleaned.csv",
+                "--model",
+                "R_(CR)_W",
+                "--auto-init",
+                "--out-root",
+            ])
+            .arg(&out)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let summary: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("eis_fit_ecm/fit_params.json")).unwrap())
+            .unwrap();
+    assert_eq!(summary["model"], "R_CR_W");
+    assert!(summary["parameters"]["C1"].is_number());
+    assert!(summary["parameters"]["sigma_w"].is_number());
 }
 
 #[test]
@@ -177,12 +205,11 @@ fn successful_drt_writes_structured_solver_report() {
         .unwrap();
     assert!(status.success());
     let report: serde_json::Value =
-        serde_json::from_slice(&fs::read(out.join("sample_001/solver_report.json")).unwrap())
-            .unwrap();
+        serde_json::from_slice(&fs::read(out.join("eis_drt/solver_report.json")).unwrap()).unwrap();
     assert_eq!(report["converged"], true);
     assert!(report["kkt_violation"].is_number());
     let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(out.join("sample_001/run.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(out.join("eis_drt/run.json")).unwrap()).unwrap();
     assert_eq!(manifest["status"], "success");
     assert_eq!(manifest["command"], "drt");
     assert!(manifest["input"]["sha256"].as_str().unwrap().len() == 64);
@@ -257,7 +284,7 @@ fn fit_ecm_writes_and_resumes_success_manifest() {
     ];
     assert!(eiscli().args(args).arg(&out).status().unwrap().success());
     let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(out.join("sample_001/run.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(out.join("eis_fit_ecm/run.json")).unwrap()).unwrap();
     assert_eq!(manifest["status"], "success");
     assert_eq!(manifest["command"], "fit-ecm");
     assert!(

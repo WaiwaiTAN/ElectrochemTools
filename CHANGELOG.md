@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- ECM models `R_CR`, `R_QR_CR`, `R_CR_CR`, and `R_QR_QR`, with an optional series semi-infinite Warburg element selected by the `_W` suffix.
+- Numbered branch initialization options and dynamic parameter/uncertainty labels in `fit_params.json`; the original `R_QR` model and its CLI option aliases remain supported.
+
 ## [0.1.0] - 2026-07-10
 
 ### Added

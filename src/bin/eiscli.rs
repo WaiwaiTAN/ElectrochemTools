@@ -8,11 +8,11 @@ use electrochem_tools::drt::{
     solve_drt,
 };
 use electrochem_tools::drt_compare::compare_with_matlab_outputs;
-use electrochem_tools::ecm::RqrParams;
+use electrochem_tools::ecm::{EcmModelSpec, EcmParams};
 use electrochem_tools::eis::{CleanOptions, ImagSignPolicy, clean_file_to};
 use electrochem_tools::eis_io::{read_eis_with_cleaning, write_impedance_csv};
 use electrochem_tools::fit::{
-    PartialRqrInit, RqrFitSettings, Weighting, complete_initial_params, fit_rqr,
+    EcmFitSettings, PartialEcmInit, Weighting, complete_initial_ecm, fit_ecm,
 };
 use electrochem_tools::plot::{write_drt_gamma_svg, write_nyquist_svg};
 use electrochem_tools::run_manifest::{
@@ -20,6 +20,7 @@ use electrochem_tools::run_manifest::{
 };
 use serde::Serialize;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -58,6 +59,47 @@ struct CleanBatchArgs {
     overwrite: bool,
     #[arg(long)]
     out_root: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Clone)]
+struct EcmInitialArgs {
+    #[arg(long)]
+    rs: Option<f64>,
+    #[arg(long, visible_alias = "rct")]
+    r1: Option<f64>,
+    #[arg(long, visible_alias = "c")]
+    c1: Option<f64>,
+    #[arg(long, visible_alias = "q")]
+    q1: Option<f64>,
+    #[arg(long, visible_alias = "n")]
+    n1: Option<f64>,
+    #[arg(long)]
+    r2: Option<f64>,
+    #[arg(long)]
+    c2: Option<f64>,
+    #[arg(long)]
+    q2: Option<f64>,
+    #[arg(long)]
+    n2: Option<f64>,
+    #[arg(long, visible_alias = "sigma-w")]
+    warburg_sigma: Option<f64>,
+}
+
+impl From<EcmInitialArgs> for PartialEcmInit {
+    fn from(value: EcmInitialArgs) -> Self {
+        Self {
+            rs: value.rs,
+            r1: value.r1,
+            c1: value.c1,
+            q1: value.q1,
+            n1: value.n1,
+            r2: value.r2,
+            c2: value.c2,
+            q2: value.q2,
+            n2: value.n2,
+            warburg_sigma: value.warburg_sigma,
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -124,20 +166,17 @@ enum Commands {
         #[command(flatten)]
         batch: BatchArgs,
     },
-    /// Equivalent circuit fitting. Currently supports R_QR.
+    /// Equivalent-circuit fitting with one/two RC or RQ branches and optional Warburg diffusion.
     FitEcm {
         #[arg(short = 'i', long = "input", required = true, num_args = 1..)]
         input: Vec<PathBuf>,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Circuit: R_QR, R_CR, R_QR_CR, R_CR_CR, or R_QR_QR; append _W for Warburg"
+        )]
         model: String,
-        #[arg(long)]
-        rs: Option<f64>,
-        #[arg(long)]
-        rct: Option<f64>,
-        #[arg(long)]
-        q: Option<f64>,
-        #[arg(long)]
-        n: Option<f64>,
+        #[command(flatten)]
+        initial: EcmInitialArgs,
         #[arg(long)]
         auto_init: bool,
         #[arg(long, value_enum, default_value_t = Weighting::Proportional)]
@@ -189,10 +228,7 @@ struct DrtSummary {
 #[derive(Serialize)]
 struct FitParamsSummary {
     model: String,
-    rs: f64,
-    rct: f64,
-    q: f64,
-    n: f64,
+    parameters: BTreeMap<String, f64>,
     weighted_sse: f64,
     mean_weighted_chi_square: f64,
     reduced_chi_square: f64,
@@ -200,8 +236,8 @@ struct FitParamsSummary {
     rmse_real: f64,
     rmse_imag: f64,
     rmse_magnitude: f64,
-    parameter_std_errors: Option<RqrParams>,
-    parameter_rel_std_error_percent: Option<RqrParams>,
+    parameter_std_errors: Option<BTreeMap<String, f64>>,
+    parameter_rel_std_error_percent: Option<BTreeMap<String, f64>>,
     parameter_correlation_labels: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     parameter_correlation_matrix: Option<Vec<Vec<f64>>>,
@@ -273,10 +309,7 @@ fn main() -> Result<()> {
         Commands::FitEcm {
             input,
             model,
-            rs,
-            rct,
-            q,
-            n,
+            initial,
             auto_init,
             weight,
             max_iter,
@@ -288,10 +321,7 @@ fn main() -> Result<()> {
         } => run_fit_ecm_batch(
             input,
             model,
-            rs,
-            rct,
-            q,
-            n,
+            initial.into(),
             auto_init,
             weight,
             max_iter,
@@ -316,8 +346,10 @@ fn run_clean(
         fail_fast: batch.fail_fast,
         overwrite: batch.overwrite,
         resume: false,
-        out_root: batch.out_root.ok_or_else(|| anyhow::anyhow!("output root not specified"))?,
-        output_suffix: "_cleaned".to_string(),
+        out_root: batch
+            .out_root
+            .ok_or_else(|| anyhow::anyhow!("output root not specified"))?,
+        output_suffix: "cleaned".to_string(),
     };
     let report = run_batch(&inputs, &options, |input, output| {
         clean_file_to(
@@ -419,11 +451,8 @@ fn run_drt_batch(
 #[allow(clippy::too_many_arguments)]
 fn run_fit_ecm_batch(
     inputs: Vec<PathBuf>,
-    model: String,
-    rs: Option<f64>,
-    rct: Option<f64>,
-    q: Option<f64>,
-    n: Option<f64>,
+    model_name: String,
+    initial: PartialEcmInit,
     auto_init: bool,
     weight: Weighting,
     max_iter: usize,
@@ -433,10 +462,17 @@ fn run_fit_ecm_batch(
     include_correlation_matrix: bool,
     batch: BatchArgs,
 ) -> Result<()> {
+    let model: EcmModelSpec = model_name.parse()?;
     let options = batch_options(&batch, "fit_ecm", inputs.len());
     let configuration = json!({
         "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": drop_positive_imag},
-        "model": model, "initial": {"rs": rs, "rct": rct, "q": q, "n": n},
+        "model": model.canonical_name(),
+        "initial": {
+            "rs": initial.rs,
+            "r1": initial.r1, "c1": initial.c1, "q1": initial.q1, "n1": initial.n1,
+            "r2": initial.r2, "c2": initial.c2, "q2": initial.q2, "n2": initial.n2,
+            "warburg_sigma": initial.warburg_sigma,
+        },
         "auto_init": auto_init, "weight": weight, "max_iterations": max_iter,
         "tolerance": tol, "include_correlation_matrix": include_correlation_matrix,
     });
@@ -453,10 +489,7 @@ fn run_fit_ecm_batch(
                 run_fit_ecm(
                     input.to_path_buf(),
                     model.clone(),
-                    rs,
-                    rct,
-                    q,
-                    n,
+                    initial.clone(),
                     auto_init,
                     weight,
                     max_iter,
@@ -727,11 +760,8 @@ fn run_drt(
 #[allow(clippy::too_many_arguments)]
 fn run_fit_ecm(
     input: PathBuf,
-    model: String,
-    rs: Option<f64>,
-    rct: Option<f64>,
-    q: Option<f64>,
-    n: Option<f64>,
+    model: EcmModelSpec,
+    partial_initial: PartialEcmInit,
     auto_init: bool,
     weight: Weighting,
     max_iter: usize,
@@ -741,10 +771,6 @@ fn run_fit_ecm(
     include_correlation_matrix: bool,
     out: Option<PathBuf>,
 ) -> Result<()> {
-    if !model.eq_ignore_ascii_case("R_QR") {
-        bail!("unsupported model '{}'; currently supported: R_QR", model);
-    }
-
     let mut data = read_eis_with_cleaning(&input, drop_positive_imag)?;
     if flip_imag {
         data.flip_imag();
@@ -753,11 +779,11 @@ fn run_fit_ecm(
     let out = out.unwrap_or_else(|| default_output_dir(&input, "ecm"));
     fs::create_dir_all(&out).with_context(|| format!("failed to create {}", out.display()))?;
 
-    let initial: RqrParams =
-        complete_initial_params(&data, PartialRqrInit { rs, rct, q, n }, auto_init)?;
-    let result = fit_rqr(
+    let initial: EcmParams = complete_initial_ecm(&data, &model, partial_initial, auto_init)?;
+    let result = fit_ecm(
         &data,
-        &RqrFitSettings {
+        &EcmFitSettings {
+            model: model.clone(),
             initial,
             weight,
             max_iter,
@@ -766,19 +792,19 @@ fn run_fit_ecm(
     )?;
 
     write_impedance_csv(&out.join("fitted_impedance.csv"), &data, &result.z_fit)?;
+    let model_name = model.canonical_name();
+    let plot_title = format!("{} Nyquist Fit", model_name);
     write_nyquist_svg(
         &out.join("nyquist_fit.svg"),
-        "R(QR) Nyquist Fit",
+        &plot_title,
         &data.z_real,
         &data.z_imag,
         &result.z_fit,
     )?;
+    let labels = model.parameter_labels();
     let summary = FitParamsSummary {
-        model: "R_QR".to_string(),
-        rs: result.params.rs,
-        rct: result.params.rct,
-        q: result.params.q,
-        n: result.params.n,
+        model: model_name,
+        parameters: labeled_parameters(&labels, &result.params.values()),
         weighted_sse: result.weighted_sse,
         mean_weighted_chi_square: result.mean_weighted_chi_square,
         reduced_chi_square: result.reduced_chi_square,
@@ -786,14 +812,15 @@ fn run_fit_ecm(
         rmse_real: result.metrics.rmse_real,
         rmse_imag: result.metrics.rmse_imag,
         rmse_magnitude: result.metrics.rmse_magnitude,
-        parameter_std_errors: result.parameter_std_errors,
-        parameter_rel_std_error_percent: result.parameter_rel_std_error_percent,
-        parameter_correlation_labels: vec![
-            "Rs".to_string(),
-            "R".to_string(),
-            "Q".to_string(),
-            "alpha".to_string(),
-        ],
+        parameter_std_errors: result
+            .parameter_std_errors
+            .as_deref()
+            .map(|values| labeled_parameters(&labels, values)),
+        parameter_rel_std_error_percent: result
+            .parameter_rel_std_error_percent
+            .as_deref()
+            .map(|values| labeled_parameters(&labels, values)),
+        parameter_correlation_labels: labels,
         parameter_correlation_matrix: include_correlation_matrix
             .then_some(result.parameter_correlation_matrix.clone())
             .flatten(),
@@ -807,6 +834,10 @@ fn run_fit_ecm(
         serde_json::to_string_pretty(&summary)?,
     )?;
     Ok(())
+}
+
+fn labeled_parameters(labels: &[String], values: &[f64]) -> BTreeMap<String, f64> {
+    labels.iter().cloned().zip(values.iter().copied()).collect()
 }
 
 fn write_drt_svgs(

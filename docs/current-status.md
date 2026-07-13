@@ -1,6 +1,6 @@
 # Current status
 
-ElectrochemTools v0.1.0 is a publishable experimental command-line release. It provides a strict/lenient shared EIS input layer, deterministic batch cleaning, direct-Debye/piecewise-linear Tikhonov DRT with order-1 or order-2 regularization, bounded active-set constraints, and an `R_QR` equivalent-circuit fitter.
+ElectrochemTools provides a strict/lenient shared EIS input layer, deterministic batch cleaning, direct-Debye/piecewise-linear Tikhonov DRT with order-1 or order-2 regularization, bounded active-set constraints, and ECM fitting for one or two RC/RQ relaxation branches with optional semi-infinite Warburg diffusion.
 
 `eiscli clean` writes `cleaned.csv`, `cleaned.z60`, and `input_report.json`; it has no resume mode and never writes `run.json`. `eiscli drt` and `eiscli fit-ecm` write a versioned `run.json` and only resume when the command, input SHA-256, numerical configuration SHA-256, successful status, and declared outputs all match.
 
@@ -8,4 +8,4 @@ MATLAB R2023b/Optimization Toolbox golden validation covers the piecewise-linear
 
 The v0.1.0 prebuilt release target is only `x86_64-pc-windows-msvc`. The core is ordinary cross-platform Rust and can be built from source elsewhere, but Linux and macOS official archives are outside this release.
 
-This is not a full DRTtools replacement. There is no RBF DRT, HMC, Bayesian Hilbert Transform, GUI, Python binding, or ECM model other than `R_QR`. Credible intervals are Gaussian linear approximations, and the KK result is a DRT cross-reconstruction proxy.
+This is not a full DRTtools replacement. There is no RBF DRT, HMC, Bayesian Hilbert Transform, GUI, Python binding, finite-length diffusion ECM, or inductive ECM element. Credible intervals are Gaussian linear approximations, and the KK result is a DRT cross-reconstruction proxy.

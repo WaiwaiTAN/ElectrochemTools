@@ -2,7 +2,7 @@
 
 A collection of command-line tools for processing electrochemical workstation data, with native support for CorrTest file formats (`.cor` for CV, OCP, i-t, E-t tests and `.z60` for EIS tests).
 
-> **This is not a full DRTtools replacement.** v0.1.0 focuses on reliable EIS input, direct-Debye/piecewise-linear DRT, and `R_QR` fitting.
+> **This is not a full DRTtools replacement.** The current code focuses on reliable EIS input, direct-Debye/piecewise-linear DRT, and a focused set of one- and two-process ECMs.
 
 The audited implementation status and known numerical limitations are recorded in [`docs/current-status.md`](docs/current-status.md).
 
@@ -11,7 +11,7 @@ The audited implementation status and known numerical limitations are recorded i
 | Tool | Description |
 |------|-------------|
 | `clean_eis` | Clean EIS data by filtering out invalid data points |
-| `eiscli` | EIS post-processing: Tikhonov DRT MVP and R(QR) equivalent-circuit fitting |
+| `eiscli` | EIS post-processing: Tikhonov DRT MVP and RC/RQ/Warburg equivalent-circuit fitting |
 | `merge_cor` | Merge multiple `.cor` files with time-aligned timestamps |
 | `trim_cv` | Trim cyclic voltammetry data to complete cycles only |
 
@@ -26,11 +26,11 @@ Prebuilt v0.1.0 binaries are currently provided for 64-bit Windows using the MSV
 ```powershell
 .\eiscli.exe --help
 .\eiscli.exe clean -i data.z60 --out-root result
-.\eiscli.exe drt -i result\sample_001\cleaned.csv --nonnegative --out-root drt-result
-.\eiscli.exe fit-ecm -i result\sample_001\cleaned.csv --model R_QR --auto-init --out-root ecm-result
+.\eiscli.exe drt -i result\data_cleaned\cleaned.csv --nonnegative --out-root drt-result
+.\eiscli.exe fit-ecm -i result\data_cleaned\cleaned.csv --model R_QR --auto-init --out-root ecm-result
 ```
 
-Each input is assigned a stable `sample_NNN` directory. Cleaning writes `cleaned.csv`, `cleaned.z60`, and `input_report.json`. DRT and ECM write their result files plus `run.json`.
+Each input is assigned a stable `<input-stem>_<process>` directory below `--out-root`; an existing `_cleaned` suffix is removed from the logical input stem. Cleaning writes `cleaned.csv`, `cleaned.z60`, and `input_report.json`. DRT and ECM write their result files plus `run.json`.
 
 ### Prerequisites
 
@@ -77,7 +77,7 @@ Subcommands:
 | Command | Description |
 |---------|-------------|
 | `eiscli drt` | Tikhonov DRT MVP using direct Debye discretization |
-| `eiscli fit-ecm` | Equivalent circuit fitting, currently `R_QR` |
+| `eiscli fit-ecm` | Equivalent-circuit fitting with RC/RQ branches and optional Warburg diffusion |
 | `eiscli clean` | Strict shared EIS validation and cleaning for one or more files |
 
 Input should contain impedance columns equivalent to:
@@ -109,11 +109,16 @@ tau_min = 1 / (2*pi*f_max) / 10
 tau_max = 1 / (2*pi*f_min) * 10
 ```
 
-R(QR) model:
+ECM convention:
 
 ```text
-Z = Rs + 1 / (1/Rct + Q(j omega)^n)
+Z = Rs + sum(Z_branch) + optional Z_W
+Z_RC = 1 / (1/R + j omega C)
+Z_RQ = 1 / (1/R + Q(j omega)^n)
+Z_W  = sigma_w (1-j) / sqrt(omega)
 ```
+
+`W` is the semi-infinite Warburg element. The supported model names are `R_CR`, `R_QR`, `R_QR_CR`, `R_CR_CR`, and `R_QR_QR`; append `_W` to any name to add Warburg diffusion in series. Parenthesized literature spellings such as `R_(QR)_(CR)_W` are also accepted. Branch 1 uses `--r1` plus `--c1` or `--q1 --n1`; branch 2 uses the corresponding `2` options. For compatibility, `--rct`, `--c`, `--q`, and `--n` remain aliases for the branch-1 options. Resistances are in ohms, capacitances in farads, and `Q` follows the CPE admittance definition above.
 
 Examples:
 
@@ -127,9 +132,11 @@ eiscli drt -i examples/data/eis.z60 --drop-positive-imag --tau-grid drttools \
   --compare-matlab-regression tests/golden/drttools/eis_clean_matlab_drttools_eis_regression.txt
 eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR --out-root result/ --rs 0.5 --rct 20 --q 1e-3 --n 0.85
 eiscli fit-ecm -i examples/data/eis.z60 --model R_QR --auto-init --drop-positive-imag --include-correlation-matrix
+eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR_CR --auto-init --out-root result/
+eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR_QR_W --auto-init --out-root result/
 ```
 
-All file commands accept one or more `-i/--input` paths. Results are assigned deterministically to `sample_001`, `sample_002`, and so on below `--out-root` (default `result`), with a stable `batch_summary.csv`. Use `--jobs 1` for serial execution; the default is the smaller of available logical threads and input count. `clean` requires `--overwrite` for an existing sample directory and never writes `run.json`. For `drt` and `fit-ecm`, `--resume` only skips a successful run whose input SHA-256, numerical configuration SHA-256, command, schema, and declared output files still match; otherwise it refuses to reuse the directory.
+All file commands accept one or more `-i/--input` paths. Results are assigned deterministically to `<input-stem>_cleaned`, `<input-stem>_drt`, or `<input-stem>_fit_ecm` below `--out-root`, with a stable `batch_summary.csv`. Use `--jobs 1` for serial execution; the default is the smaller of available logical threads and input count. `clean` requires `--overwrite` for an existing output directory and never writes `run.json`. For `drt` and `fit-ecm`, `--resume` only skips a successful run whose input SHA-256, numerical configuration SHA-256, command, schema, and declared output files still match; otherwise it refuses to reuse the directory.
 
 Development examples:
 
@@ -171,7 +178,7 @@ ECM fitting outputs:
 
 | File | Contents |
 |------|----------|
-| `fit_params.json` | fitted `Rs`, `Rct`, `Q`, `n`, weighted SSE, mean/reduced chi-square, RMSE, parameter standard errors, and optional correlation matrix |
+| `fit_params.json` | model name, labeled fitted parameters, weighted SSE, mean/reduced chi-square, RMSE, parameter standard errors when identifiable, and optional correlation matrix |
 | `fitted_impedance.csv` | experimental impedance, fitted impedance, and residuals |
 | `nyquist_fit.svg` | Nyquist plot of experimental vs fitted impedance |
 
@@ -183,9 +190,9 @@ Current limitations and TODO:
 - DRT supports a bounded active-set `--nonnegative` mode for the Tikhonov problem, but not DRTtools' MATLAB `quadprog` backend itself.
 - DRT supports `--auto-lambda` scanning, local peak detection, linear-Gaussian credible intervals, and a DRT-based Hilbert/Kramers-Kronig consistency proxy.
 - The credible interval output is not the original DRTtools HMC sampler; it is a deterministic Gaussian approximation around the Tikhonov solution.
-- ECM fitting currently supports only `R_QR`; future models can include `Rs-(Q||R)-(Q||R)`, Warburg diffusion, and inductance.
+- ECM fitting supports one or two RC/RQ relaxation branches and a series semi-infinite Warburg element; finite-length diffusion and inductance are not yet ECM elements.
 - `modulus` and `proportional` weighting are equivalent in the current implementation because both scale complex residuals by `1 / |Z_exp|`.
-- v0.1.0 has no RBF DRT, HMC, Bayesian Hilbert Transform, GUI, Python bindings, additional ECM models, or new automatic-lambda algorithm.
+- v0.1.0 has no RBF DRT, HMC, Bayesian Hilbert Transform, GUI, Python bindings, or new automatic-lambda algorithm.
 
 Attribution: the DRT implementation in `eiscli` is derived from the algorithmic structure of the open-source MATLAB project [Mycroft2333/DRTtools](https://github.com/Mycroft2333/DRTtools), especially the real/imaginary matrix assembly, Tikhonov regularization, and EIS consistency-score workflow. This Rust CLI is an independent command-line implementation and does not include the DRTtools GUI or an exact reproduction of its RBF/QP/HMC internals.
 

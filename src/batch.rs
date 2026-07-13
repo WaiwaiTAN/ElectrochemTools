@@ -172,7 +172,9 @@ where
             locked[index].take().unwrap_or_else(|| BatchItem {
                 input_index: index,
                 input_path: input.clone(),
-                output_dir: options.out_root.join(output_dirs[index].file_name().unwrap()),
+                output_dir: options
+                    .out_root
+                    .join(output_dirs[index].file_name().unwrap()),
                 status: BatchStatus::NotProcessed,
                 error: Some("not processed because --fail-fast stopped the batch".to_string()),
             })
