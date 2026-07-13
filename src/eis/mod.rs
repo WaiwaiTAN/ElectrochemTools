@@ -5,7 +5,9 @@ pub mod io;
 pub mod preprocess;
 pub mod validation;
 
-pub use clean::{CleanOptions, CleanReport, clean_file, clean_file_to};
+pub use clean::{
+    CleanBatchOptions, CleanOptions, CleanReport, clean_file, clean_file_to, clean_files,
+};
 pub use data::{EisMetadata, EisPoint, EisSpectrum, ImaginaryConvention, PreprocessRecord};
 pub use format::EisFormat;
 pub use io::{ReadOptions, ReadOutcome, ReadReport, read_spectrum};

@@ -11,6 +11,11 @@
 
 - DRT and ECM fitting now drop positive-imaginary points by default, report the filtering count to the console, and provide `--keep-positive-imag` to retain them.
 - Gaussian DRT SVG plots now evaluate the fitted RBF expansion on a 10x dense logarithmic grid extending half a decade beyond both endpoint centers, while preserving solver-grid CSV outputs.
+- SVG plots now store LaTeX-ready axis labels with `siunitx` units and semantic text IDs directly in the single viewable SVG output.
+
+### Fixed
+
+- `eiscli clean` and `clean_eis` now share batch cleaning and write `<input>_cleaned.csv`, `<input>_cleaned.z60`, and `<input>_clean_state.json` beside each source (or flat below `--out-root`) instead of creating per-input result directories.
 
 ## [0.1.0] - 2026-07-10
 

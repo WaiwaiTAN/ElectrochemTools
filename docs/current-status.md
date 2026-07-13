@@ -2,7 +2,7 @@
 
 ElectrochemTools provides a strict/lenient shared EIS input layer, deterministic batch cleaning, pluggable piecewise-linear/Gaussian Tikhonov DRT discretization, bounded active-set constraints, and ECM fitting for one or two RC/RQ relaxation branches with optional semi-infinite Warburg diffusion.
 
-`eiscli clean` writes `cleaned.csv`, `cleaned.z60`, and `input_report.json`; it has no resume mode and never writes `run.json`. `eiscli drt` and `eiscli fit-ecm` write a versioned `run.json` and only resume when the command, input SHA-256, numerical configuration SHA-256, successful status, and declared outputs all match.
+`eiscli clean` and `clean_eis` both accept batches and write `<input-stem>_cleaned.csv`, `<input-stem>_cleaned.z60`, and `<input-stem>_clean_state.json` beside each input or flat below `--out-root`; cleaning has no resume mode and writes neither `batch_summary.csv` nor `run.json`. `eiscli drt` and `eiscli fit-ecm` write a versioned `run.json` and only resume when the command, input SHA-256, numerical configuration SHA-256, successful status, and declared outputs all match.
 
 DRT and ECM fitting remove positive-imaginary points by default after optional sign flipping and report the number removed. `--keep-positive-imag` preserves them when inductive or other positive-imaginary behavior is part of the intended analysis.
 

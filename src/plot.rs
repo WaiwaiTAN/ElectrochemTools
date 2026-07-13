@@ -61,7 +61,7 @@ pub fn write_drt_gamma_svg(path: &Path, tau: &[f64], gamma: &[f64], title: &str)
         ticks: (first_tick..=last_tick)
             .map(|power| Tick {
                 value: power as f64,
-                label: format!("10^{power}"),
+                label: format!("$10^{{{power}}}$"),
             })
             .collect(),
     };
@@ -175,7 +175,7 @@ fn write_svg(
     svg.push_str(&format!(
         r##"<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}">
 <rect width="100%" height="100%" fill="white"/>
-<text x="{cx}" y="30" text-anchor="middle" font-family="Arial" font-size="20">{title}</text>
+<text id="title" x="{cx}" y="30" text-anchor="middle" font-family="Arial" font-size="20">{title}</text>
 <rect x="{LEFT}" y="{TOP}" width="{plot_w}" height="{plot_h}" fill="none" stroke="#333" stroke-width="1"/>
 "##,
         cx = WIDTH / 2.0,
@@ -207,17 +207,18 @@ fn write_svg(
     }
 
     svg.push_str(&format!(
-        r#"<text x="{cx}" y="{ly}" text-anchor="middle" font-family="Arial" font-size="14">{x_label}</text>
-<text x="22" y="{cy}" text-anchor="middle" font-family="Arial" font-size="14" transform="rotate(-90 22 {cy})">{y_label}</text>
+        r#"<text id="xlabel" x="{cx}" y="{ly}" text-anchor="middle" font-family="Arial" font-size="14">{x_label}</text>
+<text id="ylabel" x="22" y="{cy}" text-anchor="middle" font-family="Arial" font-size="14" transform="rotate(-90 22 {cy})">{y_label}</text>
 "#,
         cx = LEFT + plot_w / 2.0,
         ly = TOP + plot_h + 58.0,
         cy = TOP + plot_h / 2.0,
-        x_label = escape_xml(x_label),
-        y_label = escape_xml(y_label)
+        x_label = escape_xml(latex_axis_label(x_label)),
+        y_label = escape_xml(latex_axis_label(y_label))
     ));
 
-    for s in series {
+    for (index, s) in series.iter().enumerate() {
+        let series_id = semantic_id("series", s.name, index);
         let points = s
             .points
             .iter()
@@ -229,17 +230,18 @@ fn write_svg(
             .collect::<Vec<_>>()
             .join(" ");
         svg.push_str(&format!(
-            r#"<polyline points="{points}" fill="none" stroke="{color}" stroke-width="2"/>
+            r#"<polyline id="{series_id}" points="{points}" fill="none" stroke="{color}" stroke-width="2"/>
 "#,
             color = s.color
         ));
     }
 
     let mut legend_y = TOP + 20.0;
-    for s in series {
+    for (index, s) in series.iter().enumerate() {
+        let legend_id = semantic_id("legend", s.name, index);
         svg.push_str(&format!(
             r#"<line x1="{x1}" y1="{legend_y}" x2="{x2}" y2="{legend_y}" stroke="{color}" stroke-width="3"/>
-<text x="{tx}" y="{ty}" font-family="Arial" font-size="12">{name}</text>
+<text id="{legend_id}" x="{tx}" y="{ty}" font-family="Arial" font-size="12">{name}</text>
 "#,
             x1 = LEFT + plot_w - 150.0,
             x2 = LEFT + plot_w - 120.0,
@@ -364,6 +366,42 @@ fn escape_xml(input: &str) -> String {
         .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn latex_axis_label(input: &str) -> &str {
+    match input.trim() {
+        "tau / s" => r"$\tau$ / \unit{\second}",
+        "gamma" => r"$\gamma(\ln\tau)$ / \unit{\ohm}",
+        "Current density / mA cm^-2" => r"$j$ / \unit{\milli\ampere\per\square\centi\metre}",
+        "Frequency / Hz" => r"$f$ / \unit{\hertz}",
+        "Z real / ohm" => r"$Z^\prime$ / \unit{\ohm}",
+        "-Z imag / ohm" => r"$-Z^{\prime\prime}$ / \unit{\ohm}",
+        _ => input,
+    }
+}
+
+fn semantic_id(prefix: &str, name: &str, index: usize) -> String {
+    let mut slug = String::new();
+    let mut previous_was_separator = false;
+    for character in name.chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+            previous_was_separator = false;
+        } else if !slug.is_empty() && !previous_was_separator {
+            slug.push('-');
+            previous_was_separator = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        format!("{prefix}-{}", index + 1)
+    } else {
+        format!("{prefix}-{slug}")
+    }
 }
 
 fn format_tick(value: f64) -> String {

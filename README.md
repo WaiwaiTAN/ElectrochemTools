@@ -25,12 +25,12 @@ Prebuilt v0.1.1 binaries are currently provided for 64-bit Windows using the MSV
 
 ```powershell
 .\eiscli.exe --help
-.\eiscli.exe clean -i data.z60 --out-root result
-.\eiscli.exe drt -i result\data_cleaned\cleaned.csv --nonnegative --out-root drt-result
-.\eiscli.exe fit-ecm -i result\data_cleaned\cleaned.csv --model R_QR --auto-init --out-root ecm-result
+.\eiscli.exe clean -i data.z60
+.\eiscli.exe drt -i data_cleaned.csv --nonnegative --out-root drt-result
+.\eiscli.exe fit-ecm -i data_cleaned.csv --model R_QR --auto-init --out-root ecm-result
 ```
 
-Each input is assigned a stable `<input-stem>_<process>` directory below `--out-root`; an existing `_cleaned` suffix is removed from the logical input stem. Cleaning writes `cleaned.csv`, `cleaned.z60`, and `input_report.json`. DRT and ECM write their result files plus `run.json`.
+Both cleaning entry points write `<input-stem>_cleaned.csv`, `<input-stem>_cleaned.z60`, and `<input-stem>_clean_state.json` beside each input, or as flat files below an optional `--out-root`. DRT and ECM assign each input a stable `<input-stem>_<process>` directory below `--out-root` and write their result files plus `run.json`.
 
 ### Prerequisites
 
@@ -58,7 +58,10 @@ Filters EIS (Electrochemical Impedance Spectroscopy) data, removing rows where t
 
 **Input:** Tab-separated EIS export files (9-column format, header starting with `Freq(Hz)`)
 
-**Output:** Cleaned TSV and CSV files in the same directory as input (`{original}_cleaned.z60`, `{original}_cleaned.csv`)
+**Output:** Three files in the same directory as the input: `{original}_cleaned.z60`,
+`{original}_cleaned.csv`, and `{original}_clean_state.json`. The compatibility
+`--out-root` option writes the same three flat, stem-prefixed files in the selected
+directory instead.
 
 ```bash
 # Single file
@@ -90,7 +93,7 @@ Header names such as `freq`, `frequency_hz`, `Freq(Hz)`, `Zreal`, `Z'`, `ReZ`, `
 
 Frequencies are sorted from high to low after reading. Use `--flip-imag` only when the input convention is known to be inverted. DRT and ECM fitting drop positive-imaginary points by default after applying any sign flip and print the number removed for each input. Use `--keep-positive-imag` when those points contain information that should remain in the analysis.
 
-The shared reader is strict by default: malformed rows, non-finite values, non-positive frequencies, duplicate frequencies, missing columns, and ambiguous columns are errors. `eiscli clean --lenient` skips invalid rows and records counts by reason in `input_report.json`. Sign conversion is explicit through `--imag-sign preserve|flip|negative-capacitive|positive-capacitive`.
+The shared reader is strict by default: malformed rows, non-finite values, non-positive frequencies, duplicate frequencies, missing columns, and ambiguous columns are errors. `eiscli clean --lenient` skips invalid rows and records counts by reason in `<input-stem>_clean_state.json`. Sign conversion is explicit through `--imag-sign preserve|flip|negative-capacitive|positive-capacitive`.
 
 ```bash
 eiscli clean -i examples/data/eis.z60 --out-root result
@@ -138,7 +141,7 @@ eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR_CR --auto-init --ou
 eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR_QR_W --auto-init --out-root result/
 ```
 
-All file commands accept one or more `-i/--input` paths. Results are assigned deterministically to `<input-stem>_cleaned`, `<input-stem>_drt`, or `<input-stem>_fit_ecm` below `--out-root`, with a stable `batch_summary.csv`. Use `--jobs 1` for serial execution; the default is the smaller of available logical threads and input count. `clean` requires `--overwrite` for an existing output directory and never writes `run.json`. For `drt` and `fit-ecm`, `--resume` only skips a successful run whose input SHA-256, numerical configuration SHA-256, command, schema, and declared output files still match; otherwise it refuses to reuse the directory.
+All file commands accept one or more `-i/--input` paths. Use `--jobs 1` for serial execution; the default is the smaller of available logical threads and input count. Both `eiscli clean` and `clean_eis` use the same flat three-file layout, support batch cleaning, require `--overwrite` when a target file already exists, and do not write `batch_summary.csv` or `run.json`. DRT and ECM results use `<input-stem>_drt` or `<input-stem>_fit_ecm` directories below `--out-root` with a stable `batch_summary.csv`. For `drt` and `fit-ecm`, `--resume` only skips a successful run whose input SHA-256, numerical configuration SHA-256, command, schema, and declared output files still match; otherwise it refuses to reuse the directory.
 
 Development examples:
 
@@ -164,7 +167,13 @@ DRT outputs:
 | `drt_gamma.svg` | DRT gamma plot |
 | `nyquist_reconstruction.svg` | Nyquist plot of experimental vs reconstructed impedance |
 
-DRT SVG plots use `log10(tau)` internally and label the x-axis at integer decades such as `10^-2`, `10^-1`, and `10^0`. Gaussian gamma plots evaluate the fitted RBF expansion on a logarithmic grid with 10 times as many points as the collocation grid and extend the evaluation range by half a decade beyond both endpoint centers, matching the smooth-plotting approach used by DRTtools; numerical CSV outputs remain on the solver grid. Gamma plots start the y-axis at zero and use rounded tick intervals. Nyquist SVG plots use a square plotting area and equal ohm scaling on both axes, so 1 ohm horizontally has the same screen length as 1 ohm vertically.
+DRT SVG plots use `log10(tau)` internally and label the x-axis with literal LaTeX inline math at integer decades, such as `$10^{-2}$`, `$10^{-1}$`, and `$10^{0}$`. Gaussian gamma plots evaluate the fitted RBF expansion on a logarithmic grid with 10 times as many points as the collocation grid and extend the evaluation range by half a decade beyond both endpoint centers, matching the smooth-plotting approach used by DRTtools; numerical CSV outputs remain on the solver grid. Gamma plots start the y-axis at zero and use rounded tick intervals. Nyquist SVG plots use a square plotting area and equal ohm scaling on both axes, so 1 ohm horizontally has the same screen length as 1 ohm vertically. Each plot is exported as one SVG whose axis text contains literal LaTeX and `siunitx` unit markup; ordinary SVG viewers remain able to open it and may show that source text literally.
+
+To typeset the embedded labels, include the SVG with LaTeX's `svg` package, load `siunitx`, ensure Inkscape is available on `PATH`, and compile with shell escape enabled:
+
+```bash
+latexmk -pdf -shell-escape the_tex_file_include_the_svg.tex
+```
 
 `--basis piecewise-linear` is the backward-compatible default. It retains the existing direct-Debye quadrature, `--tau-grid`, tau-bound, and `--n-tau` behavior.
 

@@ -75,8 +75,21 @@ fn gaussian_drt_cli_uses_drttools_centers_and_records_shape_settings() {
         .count()
         - 1;
     let svg = fs::read_to_string(out.join("eis_drt/drt_gamma.svg")).unwrap();
+    assert!(svg.contains(r#"id="title""#));
+    assert!(svg.contains(r#"id="xlabel""#));
+    assert!(svg.contains(r"$\tau$ / \unit{\second}"));
+    assert!(svg.contains(r#"id="ylabel""#));
+    assert!(svg.contains(r"$\gamma(\ln\tau)$ / \unit{\ohm}"));
+    assert!(svg.contains(r#"id="legend-gamma""#));
+    assert!(svg.contains("$10^{-1}$"));
+    assert!(!svg.contains(">10^-1<"));
+    assert!(!out.join("eis_drt/drt_gamma_latex.svg").exists());
+    assert!(!out.join("eis_drt/drt_gamma_plain.svg").exists());
     let plotted_points = svg
-        .split_once("<polyline points=\"")
+        .split_once("<polyline")
+        .unwrap()
+        .1
+        .split_once("points=\"")
         .unwrap()
         .1
         .split_once('"')
@@ -241,16 +254,19 @@ fn legacy_and_unified_clean_write_identical_data() {
             .success()
     );
     assert_eq!(
-        fs::read(unified.join("sample_cleaned/cleaned.csv")).unwrap(),
-        fs::read(legacy.join("sample/cleaned.csv")).unwrap()
+        fs::read(unified.join("sample_cleaned.csv")).unwrap(),
+        fs::read(legacy.join("sample_cleaned.csv")).unwrap()
     );
-    assert!(unified.join("sample_cleaned/input_report.json").is_file());
-    assert!(!unified.join("sample_cleaned/run.json").exists());
-    assert!(legacy.join("sample/input_report.json").is_file());
-    let report: serde_json::Value = serde_json::from_slice(
-        &fs::read(unified.join("sample_cleaned/input_report.json")).unwrap(),
-    )
-    .unwrap();
+    assert!(unified.join("sample_cleaned.z60").is_file());
+    assert!(unified.join("sample_clean_state.json").is_file());
+    assert!(legacy.join("sample_cleaned.z60").is_file());
+    assert!(legacy.join("sample_clean_state.json").is_file());
+    assert!(!unified.join("sample_cleaned").exists());
+    assert!(!unified.join("batch_summary.csv").exists());
+    assert!(!legacy.join("batch_summary.csv").exists());
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(unified.join("sample_clean_state.json")).unwrap())
+            .unwrap();
     assert_eq!(report["input_path"], input.display().to_string());
     assert_eq!(report["detected_input_format"], "csv");
     assert_eq!(report["mode"], "strict");
@@ -260,6 +276,63 @@ fn legacy_and_unified_clean_write_identical_data() {
     assert_eq!(report["valid_row_count"], 3);
     assert_eq!(report["removed_positive_imag_count"], 1);
     assert_eq!(report["output_point_count"], 2);
+}
+
+#[test]
+fn eiscli_clean_defaults_to_three_files_beside_the_input() {
+    let root = std::env::temp_dir().join(format!(
+        "electrochem_tools_sibling_clean_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let input = root.join("spectrum.csv");
+    fs::write(&input, "frequency,z_real,z_imag\n100,1,-1\n").unwrap();
+
+    assert!(
+        eiscli()
+            .args(["clean", "-i"])
+            .arg(&input)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(root.join("spectrum_cleaned.csv").is_file());
+    assert!(root.join("spectrum_cleaned.z60").is_file());
+    assert!(root.join("spectrum_clean_state.json").is_file());
+    assert!(!root.join("spectrum_cleaned").exists());
+    assert!(!root.join("batch_summary.csv").exists());
+}
+
+#[test]
+fn clean_eis_cleans_multiple_inputs_in_one_batch() {
+    let root = std::env::temp_dir().join(format!(
+        "electrochem_tools_legacy_batch_clean_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let first = root.join("first.csv");
+    let second = root.join("second.csv");
+    fs::write(&first, "frequency,z_real,z_imag\n100,1,-1\n").unwrap();
+    fs::write(&second, "frequency,z_real,z_imag\n10,2,-2\n").unwrap();
+
+    assert!(
+        clean_eis()
+            .arg("-i")
+            .arg(&first)
+            .arg(&second)
+            .args(["--jobs", "2"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    for stem in ["first", "second"] {
+        assert!(root.join(format!("{stem}_cleaned.csv")).is_file());
+        assert!(root.join(format!("{stem}_cleaned.z60")).is_file());
+        assert!(root.join(format!("{stem}_clean_state.json")).is_file());
+    }
+    assert!(!root.join("batch_summary.csv").exists());
 }
 
 #[test]
@@ -282,8 +355,10 @@ fn clean_batch_keeps_successful_outputs_when_one_input_fails() {
         .status()
         .unwrap();
     assert!(!status.success());
-    assert!(out.join("含 空格_cleaned/cleaned.csv").is_file());
-    assert!(out.join("batch_summary.csv").is_file());
+    assert!(out.join("含 空格_cleaned.csv").is_file());
+    assert!(out.join("含 空格_cleaned.z60").is_file());
+    assert!(out.join("含 空格_clean_state.json").is_file());
+    assert!(!out.join("batch_summary.csv").exists());
 }
 
 #[test]

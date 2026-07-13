@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 use electrochem_tools::batch::{
-    BatchOptions, BatchReport, BatchStatus, default_jobs, run_batch, run_batch_with_resume,
+    BatchOptions, BatchReport, BatchStatus, default_jobs, run_batch_with_resume,
 };
 use electrochem_tools::drt::{
     DrtBasis, DrtConstraintConfig, DrtSettings, DrtSolverOptions, ShapeControl, SolverReport,
@@ -9,7 +9,7 @@ use electrochem_tools::drt::{
 };
 use electrochem_tools::drt_compare::compare_with_matlab_outputs;
 use electrochem_tools::ecm::{EcmModelSpec, EcmParams};
-use electrochem_tools::eis::{CleanOptions, ImagSignPolicy, clean_file_to};
+use electrochem_tools::eis::{CleanBatchOptions, CleanOptions, ImagSignPolicy, clean_files};
 use electrochem_tools::eis_io::{read_eis_with_cleaning, write_impedance_csv};
 use electrochem_tools::fit::{
     EcmFitSettings, PartialEcmInit, Weighting, complete_initial_ecm, fit_ecm,
@@ -58,7 +58,10 @@ struct CleanBatchArgs {
     fail_fast: bool,
     #[arg(long)]
     overwrite: bool,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Write flat stem-prefixed outputs here instead of beside each input"
+    )]
     out_root: Option<PathBuf>,
 }
 
@@ -358,29 +361,18 @@ fn run_clean(
     keep_positive_imag: bool,
     batch: CleanBatchArgs,
 ) -> Result<()> {
-    let options = BatchOptions {
+    let options = CleanOptions {
+        lenient,
+        imag_sign,
+        drop_positive_imag: !keep_positive_imag,
+        out_root: batch.out_root,
+    };
+    let batch_options = CleanBatchOptions {
         jobs: batch.jobs.unwrap_or_else(|| default_jobs(inputs.len())),
         fail_fast: batch.fail_fast,
         overwrite: batch.overwrite,
-        resume: false,
-        out_root: batch
-            .out_root
-            .ok_or_else(|| anyhow::anyhow!("output root not specified"))?,
-        output_suffix: "cleaned".to_string(),
     };
-    let report = run_batch(&inputs, &options, |input, output| {
-        clean_file_to(
-            input,
-            &CleanOptions {
-                lenient,
-                imag_sign,
-                drop_positive_imag: !keep_positive_imag,
-                out_root: None,
-            },
-            output,
-        )?;
-        Ok(())
-    })?;
+    let report = clean_files(&inputs, &options, &batch_options)?;
     finish_batch(report)
 }
 
