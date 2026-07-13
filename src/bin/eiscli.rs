@@ -18,6 +18,7 @@ use electrochem_tools::plot::{write_drt_gamma_svg, write_nyquist_svg};
 use electrochem_tools::run_manifest::{
     RunManifest, collect_output_files, execute_manifested, verify_resume,
 };
+use electrochem_tools::types::EisData;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -144,7 +145,7 @@ enum Commands {
         #[arg(long)]
         flip_imag: bool,
         #[arg(long)]
-        drop_positive_imag: bool,
+        keep_positive_imag: bool,
         #[arg(long)]
         nonnegative: bool,
         #[arg(long)]
@@ -188,7 +189,7 @@ enum Commands {
         #[arg(long)]
         flip_imag: bool,
         #[arg(long)]
-        drop_positive_imag: bool,
+        keep_positive_imag: bool,
         #[arg(long)]
         include_correlation_matrix: bool,
         #[command(flatten)]
@@ -270,7 +271,7 @@ fn main() -> Result<()> {
             tau_grid,
             regularization_order,
             flip_imag,
-            drop_positive_imag,
+            keep_positive_imag,
             nonnegative,
             fit_inductance,
             credible_intervals,
@@ -294,7 +295,7 @@ fn main() -> Result<()> {
             tau_grid,
             regularization_order,
             flip_imag,
-            drop_positive_imag,
+            keep_positive_imag,
             nonnegative,
             fit_inductance,
             credible_intervals,
@@ -315,7 +316,7 @@ fn main() -> Result<()> {
             max_iter,
             tol,
             flip_imag,
-            drop_positive_imag,
+            keep_positive_imag,
             include_correlation_matrix,
             batch,
         } => run_fit_ecm_batch(
@@ -327,7 +328,7 @@ fn main() -> Result<()> {
             max_iter,
             tol,
             flip_imag,
-            drop_positive_imag,
+            keep_positive_imag,
             include_correlation_matrix,
             batch,
         ),
@@ -381,7 +382,7 @@ fn run_drt_batch(
     tau_grid: TauGridMode,
     regularization_order: usize,
     flip_imag: bool,
-    drop_positive_imag: bool,
+    keep_positive_imag: bool,
     nonnegative: bool,
     fit_inductance: bool,
     credible_intervals: bool,
@@ -395,7 +396,7 @@ fn run_drt_batch(
 ) -> Result<()> {
     let options = batch_options(&batch, "drt", inputs.len());
     let configuration = json!({
-        "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": drop_positive_imag},
+        "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": !keep_positive_imag},
         "lambda": lambda, "auto_lambda": auto_lambda, "lambda_min": lambda_min,
         "lambda_max": lambda_max, "n_lambda": n_lambda,
         "tau_min": tau_min, "tau_max": tau_max, "n_tau": n_tau, "tau_grid": tau_grid,
@@ -429,7 +430,7 @@ fn run_drt_batch(
                     tau_grid,
                     regularization_order,
                     flip_imag,
-                    drop_positive_imag,
+                    keep_positive_imag,
                     nonnegative,
                     fit_inductance,
                     credible_intervals,
@@ -458,14 +459,14 @@ fn run_fit_ecm_batch(
     max_iter: usize,
     tol: f64,
     flip_imag: bool,
-    drop_positive_imag: bool,
+    keep_positive_imag: bool,
     include_correlation_matrix: bool,
     batch: BatchArgs,
 ) -> Result<()> {
     let model: EcmModelSpec = model_name.parse()?;
     let options = batch_options(&batch, "fit_ecm", inputs.len());
     let configuration = json!({
-        "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": drop_positive_imag},
+        "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": !keep_positive_imag},
         "model": model.canonical_name(),
         "initial": {
             "rs": initial.rs,
@@ -495,7 +496,7 @@ fn run_fit_ecm_batch(
                     max_iter,
                     tol,
                     flip_imag,
-                    drop_positive_imag,
+                    keep_positive_imag,
                     include_correlation_matrix,
                     Some(output.to_path_buf()),
                 )?;
@@ -566,7 +567,7 @@ fn run_drt(
     tau_grid: TauGridMode,
     regularization_order: usize,
     flip_imag: bool,
-    drop_positive_imag: bool,
+    keep_positive_imag: bool,
     nonnegative: bool,
     fit_inductance: bool,
     credible_intervals: bool,
@@ -578,11 +579,7 @@ fn run_drt(
     compare_matlab_regression: Option<PathBuf>,
     out: Option<PathBuf>,
 ) -> Result<()> {
-    let mut data = read_eis_with_cleaning(&input, drop_positive_imag)?;
-    if flip_imag {
-        data.flip_imag();
-    }
-    data.warn_if_imag_mostly_positive();
+    let data = read_analysis_data(&input, flip_imag, keep_positive_imag, "DRT")?;
     let out = out.unwrap_or_else(|| default_output_dir(&input, "drt"));
     fs::create_dir_all(&out).with_context(|| format!("failed to create {}", out.display()))?;
 
@@ -767,15 +764,11 @@ fn run_fit_ecm(
     max_iter: usize,
     tol: f64,
     flip_imag: bool,
-    drop_positive_imag: bool,
+    keep_positive_imag: bool,
     include_correlation_matrix: bool,
     out: Option<PathBuf>,
 ) -> Result<()> {
-    let mut data = read_eis_with_cleaning(&input, drop_positive_imag)?;
-    if flip_imag {
-        data.flip_imag();
-    }
-    data.warn_if_imag_mostly_positive();
+    let data = read_analysis_data(&input, flip_imag, keep_positive_imag, "ECM fitting")?;
     let out = out.unwrap_or_else(|| default_output_dir(&input, "ecm"));
     fs::create_dir_all(&out).with_context(|| format!("failed to create {}", out.display()))?;
 
@@ -834,6 +827,29 @@ fn run_fit_ecm(
         serde_json::to_string_pretty(&summary)?,
     )?;
     Ok(())
+}
+
+fn read_analysis_data(
+    input: &Path,
+    flip_imag: bool,
+    keep_positive_imag: bool,
+    analysis: &str,
+) -> Result<EisData> {
+    let mut data = read_eis_with_cleaning(input, false)?;
+    if flip_imag {
+        data.flip_imag();
+    }
+    if keep_positive_imag {
+        data.warn_if_imag_mostly_positive();
+    } else {
+        let original_count = data.len();
+        let removed = data.drop_positive_imag()?;
+        println!(
+            "positive-imaginary filter ({analysis}): removed {removed} of {original_count} point(s) from {}; use --keep-positive-imag to disable this filter",
+            input.display()
+        );
+    }
+    Ok(data)
 }
 
 fn labeled_parameters(labels: &[String], values: &[f64]) -> BTreeMap<String, f64> {

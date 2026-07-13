@@ -61,6 +61,28 @@ impl EisData {
         }
     }
 
+    pub fn drop_positive_imag(&mut self) -> Result<usize> {
+        let original_len = self.len();
+        let mut frequency_hz = Vec::with_capacity(original_len);
+        let mut z_real = Vec::with_capacity(original_len);
+        let mut z_imag = Vec::with_capacity(original_len);
+        for index in 0..original_len {
+            if self.z_imag[index] <= 0.0 {
+                frequency_hz.push(self.frequency_hz[index]);
+                z_real.push(self.z_real[index]);
+                z_imag.push(self.z_imag[index]);
+            }
+        }
+        if frequency_hz.is_empty() {
+            bail!("all EIS rows were removed by positive-imaginary filtering");
+        }
+        let removed = original_len - frequency_hz.len();
+        self.frequency_hz = frequency_hz;
+        self.z_real = z_real;
+        self.z_imag = z_imag;
+        Ok(removed)
+    }
+
     pub fn warn_if_imag_mostly_positive(&self) {
         let positives = self.z_imag.iter().filter(|&&value| value > 0.0).count();
         if positives * 2 > self.z_imag.len() {

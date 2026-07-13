@@ -4,6 +4,8 @@ ElectrochemTools provides a strict/lenient shared EIS input layer, deterministic
 
 `eiscli clean` writes `cleaned.csv`, `cleaned.z60`, and `input_report.json`; it has no resume mode and never writes `run.json`. `eiscli drt` and `eiscli fit-ecm` write a versioned `run.json` and only resume when the command, input SHA-256, numerical configuration SHA-256, successful status, and declared outputs all match.
 
+DRT and ECM fitting remove positive-imaginary points by default after optional sign flipping and report the number removed. `--keep-positive-imag` preserves them when inductive or other positive-imaginary behavior is part of the intended analysis.
+
 MATLAB R2023b/Optimization Toolbox golden validation covers the piecewise-linear matrices and three constrained end-to-end DRTtools cases at fixed upstream commit `034d9c4c4a4916a38a0e2f10381d931ffe1981b3`. See [matlab-validation.md](matlab-validation.md).
 
 The v0.1.0 prebuilt release target is only `x86_64-pc-windows-msvc`. The core is ordinary cross-platform Rust and can be built from source elsewhere, but Linux and macOS official archives are outside this release.

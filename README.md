@@ -88,7 +88,7 @@ frequency,Z_real,Z_imag
 
 Header names such as `freq`, `frequency_hz`, `Freq(Hz)`, `Zreal`, `Z'`, `ReZ`, `Zimag`, `Z''`, `ImZ`, and CorrTest `Zr` / `Izr` are detected even when they appear after CorrTest metadata. Headerless CSV files are also supported; the first three numeric columns are interpreted as `frequency`, `Z_real`, and `Z_imag`, matching the CSV output from `clean_eis`.
 
-Frequencies are sorted from high to low after reading. The imaginary impedance sign is preserved; use `--flip-imag` only when the input convention is known to be inverted. Use `--drop-positive-imag` to apply the same positive-imaginary filtering style as `clean_eis` while reading raw `.z60` directly.
+Frequencies are sorted from high to low after reading. Use `--flip-imag` only when the input convention is known to be inverted. DRT and ECM fitting drop positive-imaginary points by default after applying any sign flip and print the number removed for each input. Use `--keep-positive-imag` when those points contain information that should remain in the analysis.
 
 The shared reader is strict by default: malformed rows, non-finite values, non-positive frequencies, duplicate frequencies, missing columns, and ambiguous columns are errors. `eiscli clean --lenient` skips invalid rows and records counts by reason in `input_report.json`. Sign conversion is explicit through `--imag-sign preserve|flip|negative-capacitive|positive-capacitive`.
 
@@ -124,14 +124,15 @@ Examples:
 
 ```bash
 eiscli drt -i examples/data/eis_cleaned.csv --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100
-eiscli drt -i examples/data/eis.z60 --drop-positive-imag --auto-lambda --nonnegative --credible-intervals
-eiscli drt -i examples/data/eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative
-eiscli drt -i examples/data/eis.z60 --drop-positive-imag --tau-grid drttools --lambda 1e-3 --nonnegative --fit-inductance
-eiscli drt -i examples/data/eis.z60 --drop-positive-imag --tau-grid drttools \
+eiscli drt -i examples/data/eis.z60 --auto-lambda --nonnegative --credible-intervals
+eiscli drt -i examples/data/eis.z60 --tau-grid drttools --lambda 1e-3 --nonnegative
+eiscli drt -i examples/data/eis.z60 --tau-grid drttools --lambda 1e-3 --nonnegative --fit-inductance
+eiscli drt -i examples/data/eis.z60 --tau-grid drttools \
   --compare-matlab-drt tests/golden/drttools/eis_clean_matlab_drttools_drt_peaks.csv \
   --compare-matlab-regression tests/golden/drttools/eis_clean_matlab_drttools_eis_regression.txt
 eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR --out-root result/ --rs 0.5 --rct 20 --q 1e-3 --n 0.85
-eiscli fit-ecm -i examples/data/eis.z60 --model R_QR --auto-init --drop-positive-imag --include-correlation-matrix
+eiscli fit-ecm -i examples/data/eis.z60 --model R_QR --auto-init --include-correlation-matrix
+eiscli fit-ecm -i examples/data/eis.z60 --model R_QR --auto-init --keep-positive-imag
 eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR_CR --auto-init --out-root result/
 eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR_QR_W --auto-init --out-root result/
 ```
