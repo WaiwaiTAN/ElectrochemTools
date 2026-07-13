@@ -2,7 +2,7 @@
 
 A collection of command-line tools for processing electrochemical workstation data, with native support for CorrTest file formats (`.cor` for CV, OCP, i-t, E-t tests and `.z60` for EIS tests).
 
-> **This is not a full DRTtools replacement.** The current code focuses on reliable EIS input, direct-Debye/piecewise-linear DRT, and a focused set of one- and two-process ECMs.
+> **This is not a full DRTtools replacement.** The current code focuses on reliable EIS input, backward-compatible piecewise-linear DRT, the default Gaussian DRTtools Simple Run branch, and a focused set of one- and two-process ECMs.
 
 The audited implementation status and known numerical limitations are recorded in [`docs/current-status.md`](docs/current-status.md).
 
@@ -11,7 +11,7 @@ The audited implementation status and known numerical limitations are recorded i
 | Tool | Description |
 |------|-------------|
 | `clean_eis` | Clean EIS data by filtering out invalid data points |
-| `eiscli` | EIS post-processing: Tikhonov DRT MVP and RC/RQ/Warburg equivalent-circuit fitting |
+| `eiscli` | EIS post-processing: piecewise-linear/Gaussian Tikhonov DRT and RC/RQ/Warburg equivalent-circuit fitting |
 | `merge_cor` | Merge multiple `.cor` files with time-aligned timestamps |
 | `trim_cv` | Trim cyclic voltammetry data to complete cycles only |
 
@@ -76,7 +76,7 @@ Subcommands:
 
 | Command | Description |
 |---------|-------------|
-| `eiscli drt` | Tikhonov DRT MVP using direct Debye discretization |
+| `eiscli drt` | Tikhonov DRT using piecewise-linear or Gaussian discretization |
 | `eiscli fit-ecm` | Equivalent-circuit fitting with RC/RQ branches and optional Warburg diffusion |
 | `eiscli clean` | Strict shared EIS validation and cleaning for one or more files |
 
@@ -126,6 +126,7 @@ Examples:
 eiscli drt -i examples/data/eis_cleaned.csv --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100
 eiscli drt -i examples/data/eis.z60 --auto-lambda --nonnegative --credible-intervals
 eiscli drt -i examples/data/eis.z60 --tau-grid drttools --lambda 1e-3 --nonnegative
+eiscli drt -i examples/data/eis.z60 --basis gaussian --shape-control fwhm --shape-coefficient 0.5 --lambda 1e-3 --regularization-order 1 --nonnegative
 eiscli drt -i examples/data/eis.z60 --tau-grid drttools --lambda 1e-3 --nonnegative --fit-inductance
 eiscli drt -i examples/data/eis.z60 --tau-grid drttools \
   --compare-matlab-drt tests/golden/drttools/eis_clean_matlab_drttools_drt_peaks.csv \
@@ -165,7 +166,11 @@ DRT outputs:
 
 DRT SVG plots use `log10(tau)` internally and label the x-axis at integer decades such as `10^-2`, `10^-1`, and `10^0`. Gamma plots start the y-axis at zero and use rounded tick intervals. Nyquist SVG plots use a square plotting area and equal ohm scaling on both axes, so 1 ohm horizontally has the same screen length as 1 ohm vertically.
 
-For easier comparison with MATLAB DRTtools exports, `--tau-grid drttools` uses `tau = 1 / frequency` as the collocation grid. The default `--tau-grid logspace` keeps using a separately specified or inferred log-spaced grid.
+`--basis piecewise-linear` is the backward-compatible default. It retains the existing direct-Debye quadrature, `--tau-grid`, tau-bound, and `--n-tau` behavior.
+
+`--basis gaussian` selects the DRTtools Gaussian RBF discretization. Its centers always use `tau = 1 / frequency`, matching Simple Run; consequently `--tau-grid`, `--tau-min`, `--tau-max`, and `--n-tau` do not change Gaussian centers. `--shape-control fwhm --shape-coefficient 0.5` reproduces the DRTtools defaults and computes `epsilon = coefficient * 2*sqrt(ln(2)) / mean(diff(ln(tau)))`. `--shape-control shape-factor` accepts epsilon directly. Gaussian currently supports first-order regularization only.
+
+For piecewise-linear comparison with MATLAB DRTtools exports, `--tau-grid drttools` also uses `tau = 1 / frequency`. The default `--tau-grid logspace` keeps using a separately specified or inferred log-spaced grid.
 
 Use `--fit-inductance` to include the DRTtools-style inductance term in the imaginary impedance model. Without this flag, inductance is fixed at zero.
 
@@ -187,15 +192,15 @@ After successful `fit-ecm`, the CLI prints fit quality and parameter estimates t
 
 Current limitations and TODO:
 
-- DRT is currently a direct Debye / piecewise-linear discretization implementation, not a full reproduction of every DRTtools RBF mode.
+- DRT supports the existing direct-Debye/piecewise-linear discretization and the Gaussian RBF branch of DRTtools Simple Run; other RBF families are not implemented.
 - DRT supports a bounded active-set `--nonnegative` mode for the Tikhonov problem, but not DRTtools' MATLAB `quadprog` backend itself.
 - DRT supports `--auto-lambda` scanning, local peak detection, linear-Gaussian credible intervals, and a DRT-based Hilbert/Kramers-Kronig consistency proxy.
 - The credible interval output is not the original DRTtools HMC sampler; it is a deterministic Gaussian approximation around the Tikhonov solution.
 - ECM fitting supports one or two RC/RQ relaxation branches and a series semi-infinite Warburg element; finite-length diffusion and inductance are not yet ECM elements.
 - `modulus` and `proportional` weighting are equivalent in the current implementation because both scale complex residuals by `1 / |Z_exp|`.
-- v0.1.0 has no RBF DRT, HMC, Bayesian Hilbert Transform, GUI, Python bindings, or new automatic-lambda algorithm.
+- There is no HMC/Bayesian Run, Bayesian Hilbert Transform, GUI, Python binding, or DRTtools automatic-lambda algorithm.
 
-Attribution: the DRT implementation in `eiscli` is derived from the algorithmic structure of the open-source MATLAB project [Mycroft2333/DRTtools](https://github.com/Mycroft2333/DRTtools), especially the real/imaginary matrix assembly, Tikhonov regularization, and EIS consistency-score workflow. This Rust CLI is an independent command-line implementation and does not include the DRTtools GUI or an exact reproduction of its RBF/QP/HMC internals.
+Attribution: the DRT implementation in `eiscli` is derived from the algorithmic structure of the open-source MATLAB project [Mycroft2333/DRTtools](https://github.com/Mycroft2333/DRTtools), especially the real/imaginary matrix assembly, Tikhonov regularization, and EIS consistency-score workflow. The default Gaussian Simple Run configuration is validated numerically against the pinned MATLAB implementation. This Rust CLI is an independent command-line implementation and does not include the DRTtools GUI, Bayesian Run, or every RBF family.
 
 
 ### `merge_cor`

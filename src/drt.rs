@@ -1,3 +1,4 @@
+pub mod discretization;
 pub mod kernel;
 pub mod regularization;
 pub mod solver;
@@ -5,11 +6,15 @@ pub mod solver;
 pub use crate::regularization::SolverReport;
 use crate::types::{EisData, FitMetrics, calculate_fit_metrics};
 use anyhow::{Result, bail};
-use kernel::{assemble_combined_system, assemble_imag_system, assemble_real_system};
+pub use discretization::{DrtBasis, ShapeControl};
+use discretization::{DrtDiscretization, GaussianDiscretization, PiecewiseLinearDiscretization};
+use kernel::{
+    BasisKernelMatrices, assemble_combined_from_kernels, assemble_imag_from_kernels,
+    assemble_real_from_kernels, reconstruct_from_kernels,
+};
 pub use kernel::{delta_ln_tau, reconstruct_impedance, reconstruct_impedance_with_inductance};
 use nalgebra::{DMatrix, DVector};
 use num_complex::Complex;
-use regularization::piecewise_linear_penalty;
 use serde::Serialize;
 use solver::solve_coefficients;
 pub use solver::{DrtConstraintConfig, DrtSolverOptions};
@@ -29,6 +34,9 @@ pub struct DrtSettings {
     pub tau_max: Option<f64>,
     pub n_tau: usize,
     pub tau_grid: TauGridMode,
+    pub basis: DrtBasis,
+    pub shape_control: ShapeControl,
+    pub shape_coefficient: f64,
     pub fit_inductance: bool,
     pub regularization_order: usize,
     pub nonnegative: bool,
@@ -59,6 +67,10 @@ pub struct DrtSettingsUsed {
     pub tau_max: f64,
     pub n_tau: usize,
     pub tau_grid: TauGridMode,
+    pub basis: DrtBasis,
+    pub shape_control: ShapeControl,
+    pub shape_coefficient: f64,
+    pub epsilon: Option<f64>,
     pub fit_inductance: bool,
     pub regularization_order: usize,
     pub nonnegative: bool,
@@ -176,15 +188,31 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
     let (default_min, default_max) = infer_tau_bounds(data)?;
     let tau_min = settings.tau_min.unwrap_or(default_min);
     let tau_max = settings.tau_max.unwrap_or(default_max);
-    let tau = match settings.tau_grid {
-        TauGridMode::Logspace => make_log_tau_grid(tau_min, tau_max, settings.n_tau)?,
-        TauGridMode::Drttools => make_drttools_tau_grid(data)?,
+    let (tau, used_tau_grid) = match settings.basis {
+        DrtBasis::PiecewiseLinear => (
+            match settings.tau_grid {
+                TauGridMode::Logspace => make_log_tau_grid(tau_min, tau_max, settings.n_tau)?,
+                TauGridMode::Drttools => make_drttools_tau_grid(data)?,
+            },
+            settings.tau_grid,
+        ),
+        DrtBasis::Gaussian => (make_drttools_tau_grid(data)?, TauGridMode::Drttools),
     };
+    let discretization: Box<dyn DrtDiscretization> = match settings.basis {
+        DrtBasis::PiecewiseLinear => Box::new(PiecewiseLinearDiscretization::new(tau)?),
+        DrtBasis::Gaussian => Box::new(GaussianDiscretization::new(
+            tau,
+            settings.shape_control,
+            settings.shape_coefficient,
+        )?),
+    };
+    let tau = discretization.tau();
     let n_tau = tau.len();
     let n_unpenalized = if settings.fit_inductance { 2 } else { 1 };
     let gamma_offset = n_unpenalized;
-    let (a, b) = assemble_combined_system(data, &tau, settings.fit_inductance);
-    let penalty = piecewise_linear_penalty(&tau, settings.regularization_order, n_unpenalized)?;
+    let kernels = discretization.kernel_matrices(&data.frequency_hz)?;
+    let (a, b) = assemble_combined_from_kernels(data, &kernels, settings.fit_inductance);
+    let penalty = discretization.penalty(settings.regularization_order, n_unpenalized)?;
     let solution = solve_coefficients(
         &a,
         &b,
@@ -200,12 +228,29 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
     } else {
         (0.0, x[0])
     };
-    let gamma: Vec<f64> = x.iter().skip(gamma_offset).copied().collect();
-    let z_fit =
-        reconstruct_impedance_with_inductance(&data.frequency_hz, r_inf, inductance, &tau, &gamma);
+    let basis_coefficients = DVector::from_iterator(n_tau, x.iter().skip(gamma_offset).copied());
+    let gamma_vector = discretization.map_coefficients_to_gamma(&basis_coefficients)?;
+    let gamma: Vec<f64> = gamma_vector.iter().copied().collect();
+    let basis_coefficients_vec = basis_coefficients.iter().copied().collect::<Vec<_>>();
+    let z_fit = match discretization.basis() {
+        DrtBasis::PiecewiseLinear => reconstruct_impedance_with_inductance(
+            &data.frequency_hz,
+            r_inf,
+            inductance,
+            tau,
+            &gamma,
+        ),
+        DrtBasis::Gaussian => reconstruct_from_kernels(
+            &data.frequency_hz,
+            r_inf,
+            inductance,
+            &kernels,
+            &basis_coefficients_vec,
+        ),
+    };
     let metrics = calculate_fit_metrics(data, &z_fit)?;
-    let polarization_resistance = polarization_resistance(&tau, &gamma);
-    let peaks = detect_drt_peaks(&tau, &gamma, 0.01);
+    let polarization_resistance = polarization_resistance(tau, &gamma);
+    let peaks = detect_drt_peaks(tau, &gamma, 0.01);
     let used_tau_min = tau.first().copied().unwrap_or(tau_min);
     let used_tau_max = tau.last().copied().unwrap_or(tau_max);
     let credible_intervals = if settings.credible_intervals {
@@ -218,14 +263,22 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
             &penalty,
             n_unpenalized,
             settings.fit_inductance,
+            &discretization.gamma_mapping_matrix(),
+            &gamma,
         )
     } else {
         None
     };
-    let kk = estimate_kk_consistency(data, &tau, settings.lambda, settings.regularization_order)?;
+    let kk = estimate_kk_consistency_with_discretization(
+        data,
+        discretization.as_ref(),
+        &kernels,
+        settings.lambda,
+        settings.regularization_order,
+    )?;
 
     Ok(DrtResult {
-        tau,
+        tau: tau.to_vec(),
         gamma,
         r_inf,
         z_fit,
@@ -234,7 +287,11 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
             tau_min: used_tau_min,
             tau_max: used_tau_max,
             n_tau,
-            tau_grid: settings.tau_grid,
+            tau_grid: used_tau_grid,
+            basis: discretization.basis(),
+            shape_control: settings.shape_control,
+            shape_coefficient: settings.shape_coefficient,
+            epsilon: discretization.epsilon(),
             fit_inductance: settings.fit_inductance,
             regularization_order: settings.regularization_order,
             nonnegative: settings.nonnegative,
@@ -342,19 +399,24 @@ fn estimate_drt_credible_intervals(
     penalty: &DMatrix<f64>,
     n_unpenalized: usize,
     fit_inductance: bool,
+    gamma_mapping: &DMatrix<f64>,
+    gamma: &[f64],
 ) -> Option<DrtCredibleIntervals> {
     let residual = a * x - b;
     let dof = (b.len() as f64 - x.len() as f64).max(1.0);
     let sigma2 = residual.dot(&residual) / dof;
     let precision = a.transpose() * a + penalty.scale(lambda);
     let covariance = precision.try_inverse()?.scale(sigma2);
+    let coefficient_covariance = covariance
+        .view((n_unpenalized, n_unpenalized), (n_gamma, n_gamma))
+        .into_owned();
+    let gamma_covariance = gamma_mapping * coefficient_covariance * gamma_mapping.transpose();
     let mut gamma_std = Vec::with_capacity(n_gamma);
     let mut gamma_lower_95 = Vec::with_capacity(n_gamma);
     let mut gamma_upper_95 = Vec::with_capacity(n_gamma);
     for idx in 0..n_gamma {
-        let param_idx = idx + n_unpenalized;
-        let std = covariance[(param_idx, param_idx)].max(0.0).sqrt();
-        let center = x[param_idx];
+        let std = gamma_covariance[(idx, idx)].max(0.0).sqrt();
+        let center = gamma[idx];
         gamma_std.push(std);
         gamma_lower_95.push(center - 1.96 * std);
         gamma_upper_95.push(center + 1.96 * std);
@@ -378,9 +440,21 @@ pub fn estimate_kk_consistency(
     lambda: f64,
     order: usize,
 ) -> Result<KkConsistencyResult> {
-    let (a_re, b_re) = assemble_real_system(data, tau);
-    let (a_im, b_im) = assemble_imag_system(data, tau);
-    let penalty = piecewise_linear_penalty(tau, order, 1)?;
+    let discretization = PiecewiseLinearDiscretization::new(tau.to_vec())?;
+    let kernels = discretization.kernel_matrices(&data.frequency_hz)?;
+    estimate_kk_consistency_with_discretization(data, &discretization, &kernels, lambda, order)
+}
+
+fn estimate_kk_consistency_with_discretization(
+    data: &EisData,
+    discretization: &dyn DrtDiscretization,
+    kernels: &BasisKernelMatrices,
+    lambda: f64,
+    order: usize,
+) -> Result<KkConsistencyResult> {
+    let (a_re, b_re) = assemble_real_from_kernels(data, kernels);
+    let (a_im, b_im) = assemble_imag_from_kernels(data, kernels);
+    let penalty = discretization.penalty(order, 1)?;
     let x_re = solve_coefficients(
         &a_re,
         &b_re,
@@ -401,11 +475,29 @@ pub fn estimate_kk_consistency(
         DrtSolverOptions::default(),
     )?
     .coefficients;
-    let gamma_re: Vec<f64> = x_re.iter().skip(1).copied().collect();
-    let gamma_im: Vec<f64> = x_im.iter().skip(1).copied().collect();
+    let coefficients_re: Vec<f64> = x_re.iter().skip(1).copied().collect();
+    let coefficients_im: Vec<f64> = x_im.iter().skip(1).copied().collect();
 
-    let z_from_re = reconstruct_impedance(&data.frequency_hz, x_re[0], tau, &gamma_re);
-    let z_real_no_offset = reconstruct_impedance(&data.frequency_hz, 0.0, tau, &gamma_im);
+    let (z_from_re, z_real_no_offset) = match discretization.basis() {
+        DrtBasis::PiecewiseLinear => (
+            reconstruct_impedance(
+                &data.frequency_hz,
+                x_re[0],
+                discretization.tau(),
+                &coefficients_re,
+            ),
+            reconstruct_impedance(
+                &data.frequency_hz,
+                0.0,
+                discretization.tau(),
+                &coefficients_im,
+            ),
+        ),
+        DrtBasis::Gaussian => (
+            reconstruct_from_kernels(&data.frequency_hz, x_re[0], 0.0, kernels, &coefficients_re),
+            reconstruct_from_kernels(&data.frequency_hz, 0.0, 0.0, kernels, &coefficients_im),
+        ),
+    };
     let r_inf_from_imag = data
         .z_real
         .iter()
@@ -413,7 +505,21 @@ pub fn estimate_kk_consistency(
         .map(|(&exp, fit)| exp - fit.re)
         .sum::<f64>()
         / data.len() as f64;
-    let z_from_im = reconstruct_impedance(&data.frequency_hz, r_inf_from_imag, tau, &gamma_im);
+    let z_from_im = match discretization.basis() {
+        DrtBasis::PiecewiseLinear => reconstruct_impedance(
+            &data.frequency_hz,
+            r_inf_from_imag,
+            discretization.tau(),
+            &coefficients_im,
+        ),
+        DrtBasis::Gaussian => reconstruct_from_kernels(
+            &data.frequency_hz,
+            r_inf_from_imag,
+            0.0,
+            kernels,
+            &coefficients_im,
+        ),
+    };
 
     let mut ss_im = 0.0;
     let mut ref_im = 0.0;

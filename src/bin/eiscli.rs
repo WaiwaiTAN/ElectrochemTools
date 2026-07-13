@@ -4,8 +4,8 @@ use electrochem_tools::batch::{
     BatchOptions, BatchReport, BatchStatus, default_jobs, run_batch, run_batch_with_resume,
 };
 use electrochem_tools::drt::{
-    DrtConstraintConfig, DrtSettings, DrtSolverOptions, SolverReport, TauGridMode, scan_lambda,
-    solve_drt,
+    DrtBasis, DrtConstraintConfig, DrtSettings, DrtSolverOptions, ShapeControl, SolverReport,
+    TauGridMode, scan_lambda, solve_drt,
 };
 use electrochem_tools::drt_compare::compare_with_matlab_outputs;
 use electrochem_tools::ecm::{EcmModelSpec, EcmParams};
@@ -118,7 +118,7 @@ enum Commands {
         #[command(flatten)]
         batch: CleanBatchArgs,
     },
-    /// Tikhonov DRT MVP using direct Debye discretization.
+    /// Tikhonov DRT with piecewise-linear or Gaussian discretization.
     Drt {
         #[arg(short = 'i', long = "input", required = true, num_args = 1..)]
         input: Vec<PathBuf>,
@@ -140,6 +140,12 @@ enum Commands {
         n_tau: usize,
         #[arg(long, value_enum, default_value_t = TauGridMode::Logspace)]
         tau_grid: TauGridMode,
+        #[arg(long, value_enum, default_value_t = DrtBasis::PiecewiseLinear)]
+        basis: DrtBasis,
+        #[arg(long, value_enum, default_value_t = ShapeControl::Fwhm)]
+        shape_control: ShapeControl,
+        #[arg(long, default_value_t = 0.5)]
+        shape_coefficient: f64,
         #[arg(long, default_value_t = 1)]
         regularization_order: usize,
         #[arg(long)]
@@ -204,6 +210,10 @@ struct DrtSummary {
     tau_max: f64,
     n_tau: usize,
     tau_grid: TauGridMode,
+    basis: DrtBasis,
+    shape_control: ShapeControl,
+    shape_coefficient: f64,
+    epsilon: Option<f64>,
     fit_inductance: bool,
     regularization_order: usize,
     nonnegative: bool,
@@ -269,6 +279,9 @@ fn main() -> Result<()> {
             tau_max,
             n_tau,
             tau_grid,
+            basis,
+            shape_control,
+            shape_coefficient,
             regularization_order,
             flip_imag,
             keep_positive_imag,
@@ -293,6 +306,9 @@ fn main() -> Result<()> {
             tau_max,
             n_tau,
             tau_grid,
+            basis,
+            shape_control,
+            shape_coefficient,
             regularization_order,
             flip_imag,
             keep_positive_imag,
@@ -380,6 +396,9 @@ fn run_drt_batch(
     tau_max: Option<f64>,
     n_tau: usize,
     tau_grid: TauGridMode,
+    basis: DrtBasis,
+    shape_control: ShapeControl,
+    shape_coefficient: f64,
     regularization_order: usize,
     flip_imag: bool,
     keep_positive_imag: bool,
@@ -400,6 +419,7 @@ fn run_drt_batch(
         "lambda": lambda, "auto_lambda": auto_lambda, "lambda_min": lambda_min,
         "lambda_max": lambda_max, "n_lambda": n_lambda,
         "tau_min": tau_min, "tau_max": tau_max, "n_tau": n_tau, "tau_grid": tau_grid,
+        "basis": basis, "shape_control": shape_control, "shape_coefficient": shape_coefficient,
         "regularization_order": regularization_order, "nonnegative": nonnegative,
         "fit_inductance": fit_inductance, "credible_intervals": credible_intervals,
         "solver_max_iterations": solver_max_iterations, "solver_tolerance": solver_tolerance,
@@ -428,6 +448,9 @@ fn run_drt_batch(
                     tau_max,
                     n_tau,
                     tau_grid,
+                    basis,
+                    shape_control,
+                    shape_coefficient,
                     regularization_order,
                     flip_imag,
                     keep_positive_imag,
@@ -565,6 +588,9 @@ fn run_drt(
     tau_max: Option<f64>,
     n_tau: usize,
     tau_grid: TauGridMode,
+    basis: DrtBasis,
+    shape_control: ShapeControl,
+    shape_coefficient: f64,
     regularization_order: usize,
     flip_imag: bool,
     keep_positive_imag: bool,
@@ -589,6 +615,9 @@ fn run_drt(
         tau_max,
         n_tau,
         tau_grid,
+        basis,
+        shape_control,
+        shape_coefficient,
         fit_inductance,
         regularization_order,
         nonnegative,
@@ -695,6 +724,10 @@ fn run_drt(
         tau_max: result.settings_used.tau_max,
         n_tau: result.settings_used.n_tau,
         tau_grid: result.settings_used.tau_grid,
+        basis: result.settings_used.basis,
+        shape_control: result.settings_used.shape_control,
+        shape_coefficient: result.settings_used.shape_coefficient,
+        epsilon: result.settings_used.epsilon,
         fit_inductance: result.settings_used.fit_inductance,
         regularization_order: result.settings_used.regularization_order,
         nonnegative: result.settings_used.nonnegative,

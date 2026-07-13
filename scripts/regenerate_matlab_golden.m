@@ -81,6 +81,76 @@ for case_index = 1:numel(cases)
 end
 fprintf('Generated %d MATLAB golden cases under %s\n', numel(cases), output_root);
 
+% DRTtools Simple Run defaults requested by the Rust Gaussian golden test:
+% Gaussian RBF, FWHM coefficient 0.5, combined Re/Im, lambda 1e-3,
+% first derivative regularization, nonnegative coefficients, and L fixed to 0.
+gaussian_name = 'gaussian_simple_run';
+gaussian_dir = fullfile(output_root, gaussian_name);
+if ~isfolder(gaussian_dir); mkdir(gaussian_dir); end
+rbf_type = 'Gaussian';
+shape_control = 'FWHM Coefficient';
+shape_coefficient = 0.5;
+epsilon = compute_epsilon(freq, shape_coefficient, rbf_type, shape_control);
+A_re = assemble_A_re(freq, epsilon, rbf_type);
+A_im = assemble_A_im(freq, epsilon, rbf_type);
+A_re(:, 2) = 1;
+M = assemble_M_1(freq, epsilon, rbf_type);
+[H, c] = quad_format_combined(A_re, A_im, b_re, b_im, M, lambda);
+lb = zeros(numel(freq) + 2, 1);
+ub = Inf(numel(freq) + 2, 1);
+ub(1) = 0;
+x0 = ones(numel(freq) + 2, 1);
+x0(1) = 0;
+options = optimoptions('quadprog', 'Display', 'off', ...
+    'Algorithm', 'interior-point-convex', 'OptimalityTolerance', 1e-10);
+[x, fval, exitflag, output] = quadprog(H, c(:), [], [], [], [], lb, ub, x0, options);
+if exitflag <= 0; error('quadprog failed for %s with exitflag %d', gaussian_name, exitflag); end
+
+tau = 1 ./ freq;
+[gamma, ~] = map_array_to_gamma(freq, freq, x(3:end), epsilon, rbf_type);
+gamma = gamma(:);
+z_fit = [A_re*x, A_im*x];
+writematrix(freq, fullfile(gaussian_dir, 'frequency.csv'));
+writematrix(tau, fullfile(gaussian_dir, 'tau.csv'));
+writematrix(A_re, fullfile(gaussian_dir, 'A_re.csv'));
+writematrix(A_im, fullfile(gaussian_dir, 'A_im.csv'));
+writematrix(M, fullfile(gaussian_dir, 'M_1.csv'));
+writematrix(x, fullfile(gaussian_dir, 'coefficients.csv'));
+writematrix(gamma, fullfile(gaussian_dir, 'gamma.csv'));
+writematrix(z_fit, fullfile(gaussian_dir, 'reconstructed_impedance.csv'));
+
+clear summary metadata;
+summary.lambda = lambda;
+summary.regularization_order = 1;
+summary.fit_inductance = false;
+summary.basis = rbf_type;
+summary.shape_control = shape_control;
+summary.shape_coefficient = shape_coefficient;
+summary.epsilon = epsilon;
+summary.constraints = struct('gamma_nonnegative', true, 'r_inf_nonnegative', true, ...
+    'inductance_mode', 'fixed_zero');
+summary.objective_value = fval;
+summary.R_inf = x(2);
+summary.inductance = x(1);
+summary.polarization_resistance = trapz(log(tau), gamma);
+summary.quadprog_exit_flag = exitflag;
+summary.quadprog_iterations = output.iterations;
+write_json(fullfile(gaussian_dir, 'summary.json'), summary);
+
+metadata.MATLAB_version = version;
+metadata.Optimization_Toolbox_available = logical(license('test', 'Optimization_Toolbox'));
+metadata.DRTtools_commit = '034d9c4c4a4916a38a0e2f10381d931ffe1981b3';
+metadata.generation_script = 'scripts/regenerate_matlab_golden.m';
+metadata.generation_timestamp = char(datetime('now', 'TimeZone', 'UTC', ...
+    'Format', 'yyyy-MM-dd''T''HH:mm:ssXXX'));
+metadata.input_fixture = strrep(input_relative, '\', '/');
+metadata.case_configuration = struct('basis', rbf_type, 'data_used', 'Combined Re-Im', ...
+    'shape_control', shape_control, 'shape_coefficient', shape_coefficient, ...
+    'lambda', lambda, 'regularization_order', 1, 'nonnegative', true, ...
+    'fit_inductance', false);
+write_json(fullfile(gaussian_dir, 'metadata.json'), metadata);
+fprintf('Generated MATLAB Gaussian Simple Run golden under %s\n', gaussian_dir);
+
 function write_json(path, value)
 fid = fopen(path, 'w');
 cleanup = onCleanup(@() fclose(fid));

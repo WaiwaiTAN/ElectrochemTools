@@ -1,0 +1,20 @@
+{
+  "lambda": 0.001,
+  "regularization_order": 1,
+  "fit_inductance": false,
+  "basis": "Gaussian",
+  "shape_control": "FWHM Coefficient",
+  "shape_coefficient": 0.5,
+  "epsilon": 3.55547539101808,
+  "constraints": {
+    "gamma_nonnegative": true,
+    "r_inf_nonnegative": true,
+    "inductance_mode": "fixed_zero"
+  },
+  "objective_value": -1071.3544967614457,
+  "R_inf": 4.324067526522958,
+  "inductance": 0,
+  "polarization_resistance": 1.7956701817692418,
+  "quadprog_exit_flag": 1,
+  "quadprog_iterations": 6
+}

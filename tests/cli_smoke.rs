@@ -24,7 +24,50 @@ fn drt_help_succeeds() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("--keep-positive-imag"));
+    assert!(stdout.contains("--basis"));
+    assert!(stdout.contains("--shape-control"));
+    assert!(stdout.contains("--shape-coefficient"));
     assert!(!stdout.contains("--drop-positive-imag"));
+}
+
+#[test]
+fn gaussian_drt_cli_uses_drttools_centers_and_records_shape_settings() {
+    let out = std::env::temp_dir().join(format!(
+        "electrochem_tools_gaussian_drt_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&out);
+    let status = eiscli()
+        .args([
+            "drt",
+            "-i",
+            "examples/data/eis_cleaned.csv",
+            "--basis",
+            "gaussian",
+            "--shape-control",
+            "fwhm",
+            "--shape-coefficient",
+            "0.5",
+            "--lambda",
+            "1e-3",
+            "--regularization-order",
+            "1",
+            "--nonnegative",
+            "--out-root",
+        ])
+        .arg(&out)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let summary: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("eis_drt/residual_summary.json")).unwrap())
+            .unwrap();
+    assert_eq!(summary["basis"], "gaussian");
+    assert_eq!(summary["tau_grid"], "drttools");
+    assert_eq!(summary["shape_control"], "fwhm");
+    assert_eq!(summary["shape_coefficient"], 0.5);
+    assert!(summary["epsilon"].as_f64().unwrap() > 0.0);
+    assert_eq!(summary["n_tau"], summary["n_points"]);
 }
 
 #[test]
