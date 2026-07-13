@@ -21,7 +21,7 @@ The audited implementation status and known numerical limitations are recorded i
 
 ### Windows release
 
-Prebuilt v0.1.0 binaries are currently provided for 64-bit Windows using the MSVC toolchain. Download `electrochem-tools-v0.1.0-x86_64-pc-windows-msvc.zip` from the GitHub Release, verify it against `SHA256SUMS.txt`, extract it, and run:
+Prebuilt v0.1.1 binaries are currently provided for 64-bit Windows using the MSVC toolchain. Download `electrochem-tools-v0.1.1-x86_64-pc-windows-msvc.zip` from the GitHub Release, verify it against `SHA256SUMS.txt`, extract it, and run:
 
 ```powershell
 .\eiscli.exe --help
@@ -38,7 +38,7 @@ Each input is assigned a stable `<input-stem>_<process>` directory below `--out-
 
 ### Build from source
 
-Linux/WSL and macOS users can build from source; v0.1.0 does not claim official prebuilt binaries for those platforms. The core code is designed as cross-platform Rust.
+Linux/WSL and macOS users can build from source; v0.1.1 does not claim official prebuilt binaries for those platforms. The core code is designed as cross-platform Rust.
 
 ```bash
 git clone https://github.com/WaiwaiTAN/ElectrochemTools.git

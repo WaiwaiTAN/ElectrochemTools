@@ -27,6 +27,6 @@ MATLAB R2023b/Optimization Toolbox golden validation covers the piecewise-linear
 
 For Gaussian, centers are always `tau = 1 / frequency`; piecewise-linear remains backward compatible and continues to honor `--tau-grid logspace|drttools`.
 
-The v0.1.0 prebuilt release target is only `x86_64-pc-windows-msvc`. The core is ordinary cross-platform Rust and can be built from source elsewhere, but Linux and macOS official archives are outside this release.
+The v0.1.1 prebuilt release target is only `x86_64-pc-windows-msvc`. The core is ordinary cross-platform Rust and can be built from source elsewhere, but Linux and macOS official archives are outside this release.
 
 This is not a full DRTtools replacement. Only Gaussian and piecewise-linear DRT bases are present. There is no HMC/Bayesian Run, Bayesian Hilbert Transform, GUI, Python binding, finite-length diffusion ECM, or inductive ECM element. Credible intervals are Gaussian linear approximations, and the KK result is a DRT cross-reconstruction proxy.

@@ -46,13 +46,13 @@ jobs:
           }
       - uses: actions/upload-artifact@v4
         with:
-          name: electrochem-tools-v0.1.0-x86_64-pc-windows-msvc
+          name: electrochem-tools-v0.1.1-x86_64-pc-windows-msvc
           path: |
-            target/dist/electrochem-tools-v0.1.0-x86_64-pc-windows-msvc.zip
+            target/dist/electrochem-tools-v0.1.1-x86_64-pc-windows-msvc.zip
             target/dist/SHA256SUMS.txt
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
-        run: gh release create $env:GITHUB_REF_NAME target/dist/electrochem-tools-v0.1.0-x86_64-pc-windows-msvc.zip target/dist/SHA256SUMS.txt --verify-tag --title $env:GITHUB_REF_NAME --notes-file docs/release-notes-v0.1.0.md
+        run: gh release create $env:GITHUB_REF_NAME target/dist/electrochem-tools-v0.1.1-x86_64-pc-windows-msvc.zip target/dist/SHA256SUMS.txt --verify-tag --title $env:GITHUB_REF_NAME --notes-file docs/release-notes-v0.1.1.md
