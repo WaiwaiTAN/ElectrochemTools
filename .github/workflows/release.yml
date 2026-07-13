@@ -36,12 +36,12 @@ jobs:
           & $exe clean -i examples/data/eis_cleaned.csv --out-root target/smoke-clean
           & $exe drt -i examples/data/eis_cleaned.csv --nonnegative --n-tau 30 --out-root target/smoke-drt
           & $exe fit-ecm -i examples/data/eis_cleaned.csv --model R_QR --auto-init --out-root target/smoke-ecm
-          if (Test-Path target/smoke-clean/sample_001/run.json) { throw 'clean wrote run.json' }
-          Get-Content target/smoke-clean/sample_001/input_report.json | ConvertFrom-Json | Out-Null
-          $drt = Get-Content target/smoke-drt/sample_001/run.json | ConvertFrom-Json
-          $ecm = Get-Content target/smoke-ecm/sample_001/run.json | ConvertFrom-Json
+          if (Test-Path target/smoke-clean/eis_cleaned/run.json) { throw 'clean wrote run.json' }
+          Get-Content target/smoke-clean/eis_cleaned/input_report.json | ConvertFrom-Json | Out-Null
+          $drt = Get-Content target/smoke-drt/eis_drt/run.json | ConvertFrom-Json
+          $ecm = Get-Content target/smoke-ecm/eis_fit_ecm/run.json | ConvertFrom-Json
           if ($drt.status -ne 'success' -or $ecm.status -ne 'success') { throw 'computation manifest not successful' }
-          foreach ($path in @('target/smoke-clean/sample_001/cleaned.csv', 'target/smoke-drt/sample_001/gamma.csv', 'target/smoke-drt/sample_001/drt_gamma.svg', 'target/smoke-ecm/sample_001/fit_params.json', 'target/smoke-ecm/sample_001/nyquist_fit.svg')) {
+          foreach ($path in @('target/smoke-clean/eis_cleaned/cleaned.csv', 'target/smoke-drt/eis_drt/gamma.csv', 'target/smoke-drt/eis_drt/drt_gamma.svg', 'target/smoke-ecm/eis_fit_ecm/fit_params.json', 'target/smoke-ecm/eis_fit_ecm/nyquist_fit.svg')) {
             if (-not (Test-Path $path)) { throw "Missing smoke output: $path" }
           }
       - uses: actions/upload-artifact@v4
