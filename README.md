@@ -164,7 +164,7 @@ DRT outputs:
 | `drt_gamma.svg` | DRT gamma plot |
 | `nyquist_reconstruction.svg` | Nyquist plot of experimental vs reconstructed impedance |
 
-DRT SVG plots use `log10(tau)` internally and label the x-axis at integer decades such as `10^-2`, `10^-1`, and `10^0`. Gamma plots start the y-axis at zero and use rounded tick intervals. Nyquist SVG plots use a square plotting area and equal ohm scaling on both axes, so 1 ohm horizontally has the same screen length as 1 ohm vertically.
+DRT SVG plots use `log10(tau)` internally and label the x-axis at integer decades such as `10^-2`, `10^-1`, and `10^0`. Gaussian gamma plots evaluate the fitted RBF expansion on a logarithmic grid with 10 times as many points as the collocation grid and extend the evaluation range by half a decade beyond both endpoint centers, matching the smooth-plotting approach used by DRTtools; numerical CSV outputs remain on the solver grid. Gamma plots start the y-axis at zero and use rounded tick intervals. Nyquist SVG plots use a square plotting area and equal ohm scaling on both axes, so 1 ohm horizontally has the same screen length as 1 ohm vertically.
 
 `--basis piecewise-linear` is the backward-compatible default. It retains the existing direct-Debye quadrature, `--tau-grid`, tau-bound, and `--n-tau` behavior.
 

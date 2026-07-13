@@ -43,25 +43,22 @@ pub fn write_drt_gamma_svg(path: &Path, tau: &[f64], gamma: &[f64], title: &str)
     if points.is_empty() {
         bail!("cannot plot DRT gamma: no finite positive tau values");
     }
-    let x_min = points
-        .iter()
-        .map(|(x, _)| *x)
-        .fold(f64::INFINITY, f64::min)
-        .floor();
+    let x_min = points.iter().map(|(x, _)| *x).fold(f64::INFINITY, f64::min);
     let x_max = points
         .iter()
         .map(|(x, _)| *x)
-        .fold(f64::NEG_INFINITY, f64::max)
-        .ceil();
+        .fold(f64::NEG_INFINITY, f64::max);
     let y_max_data = points
         .iter()
         .map(|(_, y)| y.max(0.0))
         .fold(0.0_f64, f64::max);
     let y_axis = nice_axis_from_zero(y_max_data, 5);
+    let first_tick = x_min.ceil() as i32;
+    let last_tick = x_max.floor() as i32;
     let x_axis = Axis {
         min: x_min,
-        max: x_max.max(x_min + 1.0),
-        ticks: (x_min as i32..=x_max as i32)
+        max: x_max.max(x_min + 1.0e-12),
+        ticks: (first_tick..=last_tick)
             .map(|power| Tick {
                 value: power as f64,
                 label: format!("10^{power}"),

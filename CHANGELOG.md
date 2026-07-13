@@ -10,6 +10,7 @@
 ### Changed
 
 - DRT and ECM fitting now drop positive-imaginary points by default, report the filtering count to the console, and provide `--keep-positive-imag` to retain them.
+- Gaussian DRT SVG plots now evaluate the fitted RBF expansion on a 10x dense logarithmic grid extending half a decade beyond both endpoint centers, while preserving solver-grid CSV outputs.
 
 ## [0.1.0] - 2026-07-10
 

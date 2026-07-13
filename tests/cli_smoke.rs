@@ -68,6 +68,23 @@ fn gaussian_drt_cli_uses_drttools_centers_and_records_shape_settings() {
     assert_eq!(summary["shape_coefficient"], 0.5);
     assert!(summary["epsilon"].as_f64().unwrap() > 0.0);
     assert_eq!(summary["n_tau"], summary["n_points"]);
+
+    let gamma_rows = fs::read_to_string(out.join("eis_drt/gamma.csv"))
+        .unwrap()
+        .lines()
+        .count()
+        - 1;
+    let svg = fs::read_to_string(out.join("eis_drt/drt_gamma.svg")).unwrap();
+    let plotted_points = svg
+        .split_once("<polyline points=\"")
+        .unwrap()
+        .1
+        .split_once('"')
+        .unwrap()
+        .0
+        .split_whitespace()
+        .count();
+    assert_eq!(plotted_points, 10 * gamma_rows);
 }
 
 #[test]

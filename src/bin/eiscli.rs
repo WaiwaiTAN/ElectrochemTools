@@ -896,8 +896,8 @@ fn write_drt_svgs(
 ) -> Result<()> {
     write_drt_gamma_svg(
         &out.join("drt_gamma.svg"),
-        &result.tau,
-        &result.gamma,
+        &result.plot_tau,
+        &result.plot_gamma,
         "DRT Gamma",
     )?;
     write_nyquist_svg(

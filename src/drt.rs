@@ -7,7 +7,10 @@ pub use crate::regularization::SolverReport;
 use crate::types::{EisData, FitMetrics, calculate_fit_metrics};
 use anyhow::{Result, bail};
 pub use discretization::{DrtBasis, ShapeControl};
-use discretization::{DrtDiscretization, GaussianDiscretization, PiecewiseLinearDiscretization};
+use discretization::{
+    DrtDiscretization, GaussianDiscretization, PiecewiseLinearDiscretization,
+    evaluate_gaussian_profile,
+};
 use kernel::{
     BasisKernelMatrices, assemble_combined_from_kernels, assemble_imag_from_kernels,
     assemble_real_from_kernels, reconstruct_from_kernels,
@@ -19,6 +22,8 @@ use serde::Serialize;
 use solver::solve_coefficients;
 pub use solver::{DrtConstraintConfig, DrtSolverOptions};
 use std::f64::consts::PI;
+
+const DRTTOOLS_PLOT_MARGIN_DECADES: f64 = 0.5;
 
 #[derive(Debug, Clone, Copy, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -48,6 +53,10 @@ pub struct DrtSettings {
 pub struct DrtResult {
     pub tau: Vec<f64>,
     pub gamma: Vec<f64>,
+    /// Tau coordinates used only for smooth visualization of the fitted profile.
+    pub plot_tau: Vec<f64>,
+    /// Gamma evaluated at `plot_tau`; solver-grid outputs remain in `tau` and `gamma`.
+    pub plot_gamma: Vec<f64>,
     pub r_inf: f64,
     pub z_fit: Vec<Complex<f64>>,
     pub settings_used: DrtSettingsUsed,
@@ -232,6 +241,23 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
     let gamma_vector = discretization.map_coefficients_to_gamma(&basis_coefficients)?;
     let gamma: Vec<f64> = gamma_vector.iter().copied().collect();
     let basis_coefficients_vec = basis_coefficients.iter().copied().collect::<Vec<_>>();
+    let (plot_tau, plot_gamma) = match discretization.basis() {
+        DrtBasis::PiecewiseLinear => (tau.to_vec(), gamma.clone()),
+        DrtBasis::Gaussian => {
+            let plot_tau_min = 10_f64.powf(tau[0].log10() - DRTTOOLS_PLOT_MARGIN_DECADES);
+            let plot_tau_max = 10_f64.powf(tau[n_tau - 1].log10() + DRTTOOLS_PLOT_MARGIN_DECADES);
+            let plot_tau = make_log_tau_grid(plot_tau_min, plot_tau_max, 10 * n_tau)?;
+            let plot_gamma = evaluate_gaussian_profile(
+                tau,
+                &basis_coefficients_vec,
+                discretization
+                    .epsilon()
+                    .expect("Gaussian discretization must provide epsilon"),
+                &plot_tau,
+            )?;
+            (plot_tau, plot_gamma)
+        }
+    };
     let z_fit = match discretization.basis() {
         DrtBasis::PiecewiseLinear => reconstruct_impedance_with_inductance(
             &data.frequency_hz,
@@ -280,6 +306,8 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
     Ok(DrtResult {
         tau: tau.to_vec(),
         gamma,
+        plot_tau,
+        plot_gamma,
         r_inf,
         z_fit,
         settings_used: DrtSettingsUsed {

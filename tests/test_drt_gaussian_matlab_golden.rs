@@ -174,6 +174,21 @@ fn gaussian_simple_run_matches_matlab_drttools() {
         result.settings_used.tau_grid,
         TauGridMode::Drttools
     ));
+    assert_eq!(result.plot_tau.len(), 10 * result.tau.len());
+    mixed_close(
+        result.plot_tau[0].log10(),
+        result.tau[0].log10() - 0.5,
+        1.0e-14,
+        1.0e-14,
+        "dense plot tau minimum",
+    );
+    mixed_close(
+        result.plot_tau[result.plot_tau.len() - 1].log10(),
+        result.tau[result.tau.len() - 1].log10() + 0.5,
+        1.0e-14,
+        1.0e-14,
+        "dense plot tau maximum",
+    );
     mixed_close(result.r_inf, summary.r_inf, 2.0e-10, 2.0e-10, "R_inf");
     mixed_close(
         result.polarization_resistance,

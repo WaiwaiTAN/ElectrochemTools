@@ -212,6 +212,44 @@ impl DrtDiscretization for GaussianDiscretization {
     }
 }
 
+pub(super) fn evaluate_gaussian_profile(
+    tau_centers: &[f64],
+    coefficients: &[f64],
+    epsilon: f64,
+    tau_evaluation: &[f64],
+) -> Result<Vec<f64>> {
+    validate_tau(tau_centers)?;
+    if coefficients.len() != tau_centers.len() {
+        bail!(
+            "Gaussian coefficient count {} does not match tau-center count {}",
+            coefficients.len(),
+            tau_centers.len()
+        );
+    }
+    if !epsilon.is_finite() || epsilon <= 0.0 {
+        bail!("Gaussian epsilon must be finite and strictly positive");
+    }
+    for (index, &tau) in tau_evaluation.iter().enumerate() {
+        if !tau.is_finite() || tau <= 0.0 {
+            bail!("evaluation tau[{index}] must be finite and strictly positive");
+        }
+    }
+
+    Ok(tau_evaluation
+        .iter()
+        .map(|&tau| {
+            tau_centers
+                .iter()
+                .zip(coefficients)
+                .map(|(&center, &coefficient)| {
+                    let distance = epsilon * (tau / center).ln();
+                    coefficient * (-(distance * distance)).exp()
+                })
+                .sum()
+        })
+        .collect())
+}
+
 /// DRTtools' Gaussian FWHM convention:
 /// `epsilon = coefficient * (2 * sqrt(ln(2))) / mean(diff(ln(tau)))`.
 pub fn gaussian_epsilon_fwhm(tau: &[f64], shape_coefficient: f64) -> Result<f64> {
@@ -400,6 +438,25 @@ mod tests {
             for column in 0..3 {
                 assert!((mapping[(row, column)] - mapping[(column, row)]).abs() < 1.0e-15);
             }
+        }
+    }
+
+    #[test]
+    fn dense_gaussian_evaluation_matches_center_mapping() {
+        let basis = GaussianDiscretization::new(vec![1.0e-2, 1.0e-1, 1.0], ShapeControl::Fwhm, 0.5)
+            .unwrap();
+        let coefficients = vec![0.4, 1.2, 0.7];
+        let expected = basis.gamma_mapping_matrix() * DVector::from_vec(coefficients.clone());
+        let actual = evaluate_gaussian_profile(
+            basis.tau(),
+            &coefficients,
+            basis.epsilon().unwrap(),
+            basis.tau(),
+        )
+        .unwrap();
+
+        for (actual, expected) in actual.iter().zip(expected.iter()) {
+            assert!((actual - expected).abs() < 1.0e-15);
         }
     }
 }
