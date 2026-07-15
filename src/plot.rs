@@ -81,6 +81,79 @@ pub fn write_drt_gamma_svg(path: &Path, tau: &[f64], gamma: &[f64], title: &str)
     )
 }
 
+pub fn write_drt_bayesian_svg(
+    path: &Path,
+    tau: &[f64],
+    gamma_map: &[f64],
+    gamma_mean: &[f64],
+    gamma_lower: &[f64],
+    gamma_upper: &[f64],
+) -> Result<()> {
+    if tau.is_empty()
+        || [gamma_map, gamma_mean, gamma_lower, gamma_upper]
+            .iter()
+            .any(|values| values.len() != tau.len())
+    {
+        bail!("cannot plot Bayesian DRT gamma: input length mismatch or empty data");
+    }
+    let make_points = |values: &[f64]| {
+        tau.iter()
+            .zip(values)
+            .filter_map(|(&tau, &gamma)| {
+                (tau > 0.0 && tau.is_finite() && gamma.is_finite()).then_some((tau.log10(), gamma))
+            })
+            .collect::<Vec<_>>()
+    };
+    let series = [
+        PlotSeries {
+            name: "MAP gamma",
+            points: make_points(gamma_map),
+            color: "#2563eb",
+        },
+        PlotSeries {
+            name: "Bayesian mean",
+            points: make_points(gamma_mean),
+            color: "#111827",
+        },
+        PlotSeries {
+            name: "lower 99%",
+            points: make_points(gamma_lower),
+            color: "#9ca3af",
+        },
+        PlotSeries {
+            name: "upper 99%",
+            points: make_points(gamma_upper),
+            color: "#dc2626",
+        },
+    ];
+    if series.iter().any(|item| item.points.is_empty()) {
+        bail!("cannot plot Bayesian DRT gamma: no finite values");
+    }
+    let (x_min, x_max, _, y_max) = bounds(&series);
+    let first_tick = x_min.ceil() as i32;
+    let last_tick = x_max.floor() as i32;
+    let x_axis = Axis {
+        min: x_min,
+        max: x_max.max(x_min + 1.0e-12),
+        ticks: (first_tick..=last_tick)
+            .map(|power| Tick {
+                value: power as f64,
+                label: format!("$10^{{{power}}}$"),
+            })
+            .collect(),
+    };
+    write_svg(
+        path,
+        "Bayesian DRT Gamma",
+        "tau / s",
+        "gamma",
+        &series,
+        x_axis,
+        nice_axis_from_zero(y_max.max(0.0), 5),
+        false,
+    )
+}
+
 pub fn write_nyquist_svg(
     path: &Path,
     title: &str,

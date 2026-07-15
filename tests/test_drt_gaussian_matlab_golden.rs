@@ -166,6 +166,7 @@ fn gaussian_simple_run_matches_matlab_drttools() {
             regularization_order: 1,
             nonnegative: true,
             credible_intervals: false,
+            bayesian: None,
             solver: DrtSolverOptions::default(),
         },
     )

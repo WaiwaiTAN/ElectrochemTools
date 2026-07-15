@@ -1,3 +1,4 @@
+mod bayesian;
 pub mod discretization;
 pub mod kernel;
 pub mod regularization;
@@ -6,6 +7,8 @@ pub mod solver;
 pub use crate::regularization::SolverReport;
 use crate::types::{EisData, FitMetrics, calculate_fit_metrics};
 use anyhow::{Result, bail};
+pub use bayesian::BayesianSettings;
+use bayesian::sample_nonnegative_posterior;
 pub use discretization::{DrtBasis, ShapeControl};
 use discretization::{
     DrtDiscretization, GaussianDiscretization, PiecewiseLinearDiscretization,
@@ -46,6 +49,7 @@ pub struct DrtSettings {
     pub regularization_order: usize,
     pub nonnegative: bool,
     pub credible_intervals: bool,
+    pub bayesian: Option<BayesianSettings>,
     pub solver: DrtSolverOptions,
 }
 
@@ -65,6 +69,7 @@ pub struct DrtResult {
     pub inductance: f64,
     pub peaks: Vec<DrtPeak>,
     pub credible_intervals: Option<DrtCredibleIntervals>,
+    pub bayesian: Option<DrtBayesianResult>,
     pub kk: KkConsistencyResult,
     pub solver_report: SolverReport,
 }
@@ -111,6 +116,40 @@ pub struct DrtCredibleIntervals {
     pub gamma_std: Vec<f64>,
     pub gamma_lower_95: Vec<f64>,
     pub gamma_upper_95: Vec<f64>,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DrtBayesianResult {
+    pub chains: usize,
+    pub samples_per_chain: usize,
+    pub burn_in: usize,
+    pub retained_samples_per_chain: usize,
+    pub total_samples: usize,
+    pub total_retained_samples: usize,
+    pub seed: u64,
+    pub chain_seeds: Vec<u64>,
+    pub lower_probability: f64,
+    pub upper_probability: f64,
+    pub noise_std: f64,
+    pub bounce_count: usize,
+    pub coefficient_r_hat: Vec<f64>,
+    pub coefficient_effective_sample_size: Vec<f64>,
+    pub max_r_hat: f64,
+    pub min_effective_sample_size: f64,
+    pub diagnostics_qualified: bool,
+    pub coefficient_mean: Vec<f64>,
+    pub coefficient_lower: Vec<f64>,
+    pub coefficient_upper: Vec<f64>,
+    pub gamma_mean: Vec<f64>,
+    pub gamma_lower: Vec<f64>,
+    pub gamma_upper: Vec<f64>,
+    #[serde(skip_serializing)]
+    pub plot_gamma_mean: Vec<f64>,
+    #[serde(skip_serializing)]
+    pub plot_gamma_lower: Vec<f64>,
+    #[serde(skip_serializing)]
+    pub plot_gamma_upper: Vec<f64>,
     pub note: String,
 }
 
@@ -295,6 +334,80 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
     } else {
         None
     };
+    let bayesian = if let Some(bayesian_settings) = settings.bayesian {
+        let sampling = sample_nonnegative_posterior(
+            &a,
+            &b,
+            &x,
+            settings.lambda,
+            &penalty,
+            n_unpenalized,
+            bayesian_settings,
+        )?;
+        let mapping = discretization.gamma_mapping_matrix();
+        let gamma_mean = &mapping * DVector::from_vec(sampling.coefficient_mean.clone());
+        let gamma_lower = &mapping * DVector::from_vec(sampling.coefficient_lower.clone());
+        let gamma_upper = &mapping * DVector::from_vec(sampling.coefficient_upper.clone());
+        let (plot_gamma_mean, plot_gamma_lower, plot_gamma_upper) = match discretization.basis() {
+            DrtBasis::PiecewiseLinear => (
+                gamma_mean.iter().copied().collect(),
+                gamma_lower.iter().copied().collect(),
+                gamma_upper.iter().copied().collect(),
+            ),
+            DrtBasis::Gaussian => {
+                let epsilon = discretization
+                    .epsilon()
+                    .expect("Gaussian discretization must provide epsilon");
+                (
+                    evaluate_gaussian_profile(tau, &sampling.coefficient_mean, epsilon, &plot_tau)?,
+                    evaluate_gaussian_profile(
+                        tau,
+                        &sampling.coefficient_lower,
+                        epsilon,
+                        &plot_tau,
+                    )?,
+                    evaluate_gaussian_profile(
+                        tau,
+                        &sampling.coefficient_upper,
+                        epsilon,
+                        &plot_tau,
+                    )?,
+                )
+            }
+        };
+        Some(DrtBayesianResult {
+            chains: sampling.chains,
+            samples_per_chain: sampling.samples_per_chain,
+            burn_in: sampling.burn_in,
+            retained_samples_per_chain: sampling.retained_samples_per_chain,
+            total_samples: sampling.total_samples,
+            total_retained_samples: sampling.total_retained_samples,
+            seed: sampling.seed,
+            chain_seeds: sampling.chain_seeds,
+            lower_probability: sampling.lower_probability,
+            upper_probability: sampling.upper_probability,
+            noise_std: sampling.noise_std,
+            bounce_count: sampling.bounce_count,
+            coefficient_r_hat: sampling.coefficient_r_hat,
+            coefficient_effective_sample_size: sampling.coefficient_effective_sample_size,
+            max_r_hat: sampling.max_r_hat,
+            min_effective_sample_size: sampling.min_effective_sample_size,
+            diagnostics_qualified: sampling.diagnostics_qualified,
+            coefficient_mean: sampling.coefficient_mean,
+            coefficient_lower: sampling.coefficient_lower,
+            coefficient_upper: sampling.coefficient_upper,
+            gamma_mean: gamma_mean.iter().copied().collect(),
+            gamma_lower: gamma_lower.iter().copied().collect(),
+            gamma_upper: gamma_upper.iter().copied().collect(),
+            plot_gamma_mean,
+            plot_gamma_lower,
+            plot_gamma_upper,
+            note: "DRTtools-style exact HMC samples of the Gaussian posterior truncated to nonnegative DRT basis coefficients; bounds are R-5 0.5% and 99.5% coefficient quantiles mapped to gamma"
+                .to_string(),
+        })
+    } else {
+        None
+    };
     let kk = estimate_kk_consistency_with_discretization(
         data,
         discretization.as_ref(),
@@ -333,6 +446,7 @@ pub fn solve_drt(data: &EisData, settings: &DrtSettings) -> Result<DrtResult> {
         inductance,
         peaks,
         credible_intervals,
+        bayesian,
         kk,
         solver_report: solution.report,
     })
@@ -357,6 +471,7 @@ pub fn scan_lambda(
         let mut trial = settings.clone();
         trial.lambda = lambda;
         trial.credible_intervals = false;
+        trial.bayesian = None;
         let result = solve_drt(data, &trial)?;
         let roughness = gamma_roughness(&result.gamma);
         let score = result.metrics.relative_rmse + 1.0e-3 * roughness.ln_1p();

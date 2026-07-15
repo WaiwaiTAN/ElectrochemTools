@@ -4,8 +4,8 @@ use electrochem_tools::batch::{
     BatchOptions, BatchReport, BatchStatus, default_jobs, run_batch_with_resume,
 };
 use electrochem_tools::drt::{
-    DrtBasis, DrtConstraintConfig, DrtSettings, DrtSolverOptions, ShapeControl, SolverReport,
-    TauGridMode, scan_lambda, solve_drt,
+    BayesianSettings, DrtBasis, DrtConstraintConfig, DrtSettings, DrtSolverOptions, ShapeControl,
+    SolverReport, TauGridMode, scan_lambda, solve_drt,
 };
 use electrochem_tools::drt_compare::compare_with_matlab_outputs;
 use electrochem_tools::ecm::{EcmModelSpec, EcmParams};
@@ -14,7 +14,7 @@ use electrochem_tools::eis_io::{read_eis_with_cleaning, write_impedance_csv};
 use electrochem_tools::fit::{
     EcmFitSettings, PartialEcmInit, Weighting, complete_initial_ecm, fit_ecm,
 };
-use electrochem_tools::plot::{write_drt_gamma_svg, write_nyquist_svg};
+use electrochem_tools::plot::{write_drt_bayesian_svg, write_drt_gamma_svg, write_nyquist_svg};
 use electrochem_tools::run_manifest::{
     RunManifest, collect_output_files, execute_manifested, verify_resume,
 };
@@ -159,8 +159,42 @@ enum Commands {
         nonnegative: bool,
         #[arg(long)]
         fit_inductance: bool,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "bayesian")]
         credible_intervals: bool,
+        #[arg(
+            long,
+            visible_alias = "bayesian-run",
+            help = "Run DRTtools-style exact HMC for nonnegative Bayesian DRT intervals"
+        )]
+        bayesian: bool,
+        #[arg(
+            long,
+            requires = "bayesian",
+            value_name = "N",
+            help = "HMC states per chain, including burn-in"
+        )]
+        bayesian_samples: Option<usize>,
+        #[arg(
+            long,
+            requires = "bayesian",
+            value_name = "N",
+            help = "States discarded from the start of each chain"
+        )]
+        bayesian_burn_in: Option<usize>,
+        #[arg(
+            long,
+            requires = "bayesian",
+            value_name = "U64",
+            help = "Base seed used to derive deterministic chain seeds"
+        )]
+        bayesian_seed: Option<u64>,
+        #[arg(
+            long,
+            requires = "bayesian",
+            value_name = "N",
+            help = "Independent HMC chains to run concurrently"
+        )]
+        bayesian_chains: Option<usize>,
         #[arg(long, default_value_t = 1_000)]
         solver_max_iterations: usize,
         #[arg(long, default_value_t = 1.0e-9)]
@@ -232,11 +266,36 @@ struct DrtSummary {
     kk_imag_to_real_relative_rmse_percent: f64,
     kk_mean_score: f64,
     credible_intervals: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bayesian: Option<BayesianRunSummary>,
     inductance_std: Option<f64>,
     r_inf_std: Option<f64>,
     note: String,
     solver: SolverReport,
     constraints: DrtConstraintConfig,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BayesianRunSummary {
+    method: String,
+    chains: usize,
+    samples_per_chain: usize,
+    total_draws: usize,
+    burn_in_per_chain: usize,
+    retained_draws_per_chain: usize,
+    retained_draws: usize,
+    seed: u64,
+    chain_seeds: Vec<u64>,
+    credible_level: f64,
+    lower_probability: f64,
+    upper_probability: f64,
+    noise_std: f64,
+    bounce_count: usize,
+    max_split_r_hat: f64,
+    min_effective_sample_size: f64,
+    diagnostics_qualified: bool,
+    constraint: String,
+    note: String,
 }
 
 #[derive(Serialize)]
@@ -291,6 +350,11 @@ fn main() -> Result<()> {
             nonnegative,
             fit_inductance,
             credible_intervals,
+            bayesian,
+            bayesian_samples,
+            bayesian_burn_in,
+            bayesian_seed,
+            bayesian_chains,
             solver_max_iterations,
             solver_tolerance,
             allow_negative_r_inf,
@@ -318,6 +382,11 @@ fn main() -> Result<()> {
             nonnegative,
             fit_inductance,
             credible_intervals,
+            bayesian,
+            bayesian_samples,
+            bayesian_burn_in,
+            bayesian_seed,
+            bayesian_chains,
             solver_max_iterations,
             solver_tolerance,
             allow_negative_r_inf,
@@ -397,6 +466,11 @@ fn run_drt_batch(
     nonnegative: bool,
     fit_inductance: bool,
     credible_intervals: bool,
+    bayesian: bool,
+    bayesian_samples: Option<usize>,
+    bayesian_burn_in: Option<usize>,
+    bayesian_seed: Option<u64>,
+    bayesian_chains: Option<usize>,
     solver_max_iterations: usize,
     solver_tolerance: f64,
     allow_negative_r_inf: bool,
@@ -405,6 +479,16 @@ fn run_drt_batch(
     compare_matlab_regression: Option<PathBuf>,
     batch: BatchArgs,
 ) -> Result<()> {
+    let bayesian = bayesian.then(|| BayesianSettings {
+        samples: bayesian_samples.unwrap_or(5_000),
+        burn_in: bayesian_burn_in.unwrap_or(500),
+        seed: bayesian_seed.unwrap_or(0),
+        chains: bayesian_chains.unwrap_or(1),
+    });
+    if let Some(settings) = bayesian {
+        settings.validate()?;
+    }
+    let effective_nonnegative = nonnegative || bayesian.is_some();
     let options = batch_options(&batch, "drt", inputs.len());
     let configuration = json!({
         "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": !keep_positive_imag},
@@ -412,8 +496,15 @@ fn run_drt_batch(
         "lambda_max": lambda_max, "n_lambda": n_lambda,
         "tau_min": tau_min, "tau_max": tau_max, "n_tau": n_tau, "tau_grid": tau_grid,
         "basis": basis, "shape_control": shape_control, "shape_coefficient": shape_coefficient,
-        "regularization_order": regularization_order, "nonnegative": nonnegative,
+        "regularization_order": regularization_order, "nonnegative": effective_nonnegative,
         "fit_inductance": fit_inductance, "credible_intervals": credible_intervals,
+        "bayesian": {
+            "enabled": bayesian.is_some(), "method": "exact_constrained_gaussian_hmc",
+            "samples": bayesian.map(|settings| settings.samples),
+            "burn_in": bayesian.map(|settings| settings.burn_in),
+            "seed": bayesian.map(|settings| settings.seed), "credible_level": 0.99,
+            "chains": bayesian.map(|settings| settings.chains),
+        },
         "solver_max_iterations": solver_max_iterations, "solver_tolerance": solver_tolerance,
         "constraints": {"gamma_nonnegative": true, "r_inf_nonnegative": !allow_negative_r_inf,
             "inductance_nonnegative": nonnegative_inductance},
@@ -446,9 +537,10 @@ fn run_drt_batch(
                     regularization_order,
                     flip_imag,
                     keep_positive_imag,
-                    nonnegative,
+                    effective_nonnegative,
                     fit_inductance,
                     credible_intervals,
+                    bayesian,
                     solver_max_iterations,
                     solver_tolerance,
                     allow_negative_r_inf,
@@ -589,6 +681,7 @@ fn run_drt(
     nonnegative: bool,
     fit_inductance: bool,
     credible_intervals: bool,
+    bayesian: Option<BayesianSettings>,
     solver_max_iterations: usize,
     solver_tolerance: f64,
     allow_negative_r_inf: bool,
@@ -614,6 +707,7 @@ fn run_drt(
         regularization_order,
         nonnegative,
         credible_intervals,
+        bayesian,
         solver: DrtSolverOptions {
             max_iterations: solver_max_iterations,
             tolerance: solver_tolerance,
@@ -644,6 +738,74 @@ fn run_drt(
         gamma_writer.serialize((tau, tau.log10(), gamma))?;
     }
     gamma_writer.flush()?;
+
+    let bayesian_summary = result.bayesian.as_ref().map(|bayesian| BayesianRunSummary {
+        method: "exact_constrained_gaussian_hmc".to_string(),
+        chains: bayesian.chains,
+        samples_per_chain: bayesian.samples_per_chain,
+        total_draws: bayesian.total_samples,
+        burn_in_per_chain: bayesian.burn_in,
+        retained_draws_per_chain: bayesian.retained_samples_per_chain,
+        retained_draws: bayesian.total_retained_samples,
+        seed: bayesian.seed,
+        chain_seeds: bayesian.chain_seeds.clone(),
+        credible_level: bayesian.upper_probability - bayesian.lower_probability,
+        lower_probability: bayesian.lower_probability,
+        upper_probability: bayesian.upper_probability,
+        noise_std: bayesian.noise_std,
+        bounce_count: bayesian.bounce_count,
+        max_split_r_hat: bayesian.max_r_hat,
+        min_effective_sample_size: bayesian.min_effective_sample_size,
+        diagnostics_qualified: bayesian.diagnostics_qualified,
+        constraint: "DRT basis coefficients >= 0".to_string(),
+        note: bayesian.note.clone(),
+    });
+    if let Some(bayesian) = &result.bayesian {
+        let mut writer = csv::Writer::from_path(out.join("gamma_bayesian.csv"))?;
+        writer.write_record([
+            "tau",
+            "log10_tau",
+            "gamma_map",
+            "gamma_mean",
+            "gamma_lower_99",
+            "gamma_upper_99",
+        ])?;
+        for index in 0..result.tau.len() {
+            writer.serialize((
+                result.tau[index],
+                result.tau[index].log10(),
+                result.gamma[index],
+                bayesian.gamma_mean[index],
+                bayesian.gamma_lower[index],
+                bayesian.gamma_upper[index],
+            ))?;
+        }
+        writer.flush()?;
+        let mut diagnostics = csv::Writer::from_path(out.join("bayesian_diagnostics.csv"))?;
+        diagnostics.write_record([
+            "tau",
+            "log10_tau",
+            "coefficient_split_r_hat",
+            "coefficient_effective_sample_size",
+        ])?;
+        for index in 0..result.tau.len() {
+            diagnostics.serialize((
+                result.tau[index],
+                result.tau[index].log10(),
+                bayesian.coefficient_r_hat[index],
+                bayesian.coefficient_effective_sample_size[index],
+            ))?;
+        }
+        diagnostics.flush()?;
+        fs::write(
+            out.join("bayesian_summary.json"),
+            serde_json::to_string_pretty(
+                bayesian_summary
+                    .as_ref()
+                    .expect("Bayesian result must have a summary"),
+            )?,
+        )?;
+    }
 
     if let Some(ci) = &result.credible_intervals {
         let mut ci_writer = csv::Writer::from_path(out.join("gamma_ci.csv"))?;
@@ -677,12 +839,32 @@ fn run_drt(
 
     let mut drttools_writer = csv::WriterBuilder::new()
         .has_headers(false)
+        .flexible(true)
         .from_path(out.join("drttools_compatible_drt.csv"))?;
     drttools_writer.write_record(["L", &format_matlab_exp(result.inductance)])?;
     drttools_writer.write_record(["R", &format_matlab_exp(result.polarization_resistance)])?;
-    drttools_writer.write_record(["tau", "gamma(tau)"])?;
-    for (&tau, &gamma) in result.tau.iter().zip(&result.gamma) {
-        drttools_writer.write_record([format_matlab_exp(tau), format_matlab_exp(gamma)])?;
+    if let Some(bayesian) = &result.bayesian {
+        drttools_writer.write_record([
+            "tau",
+            "MAP gamma",
+            "Mean gamma",
+            "Upperbound gamma",
+            "Lowerbound gamma",
+        ])?;
+        for index in 0..result.tau.len() {
+            drttools_writer.write_record([
+                format_matlab_exp(result.tau[index]),
+                format_matlab_exp(result.gamma[index]),
+                format_matlab_exp(bayesian.gamma_mean[index]),
+                format_matlab_exp(bayesian.gamma_upper[index]),
+                format_matlab_exp(bayesian.gamma_lower[index]),
+            ])?;
+        }
+    } else {
+        drttools_writer.write_record(["tau", "gamma(tau)"])?;
+        for (&tau, &gamma) in result.tau.iter().zip(&result.gamma) {
+            drttools_writer.write_record([format_matlab_exp(tau), format_matlab_exp(gamma)])?;
+        }
     }
     drttools_writer.flush()?;
 
@@ -739,6 +921,7 @@ fn run_drt(
             .imag_to_real_relative_rmse_percent,
         kk_mean_score: result.kk.mean_score,
         credible_intervals: result.settings_used.credible_intervals,
+        bayesian: bayesian_summary,
         inductance_std: result
             .credible_intervals
             .as_ref()
@@ -747,7 +930,9 @@ fn run_drt(
             .credible_intervals
             .as_ref()
             .map(|intervals| intervals.r_inf_std),
-        note: if result.settings_used.nonnegative {
+        note: if result.bayesian.is_some() {
+            "bounded active-set nonnegative Tikhonov MAP with DRTtools-style exact-HMC Bayesian intervals"
+        } else if result.settings_used.nonnegative {
             "bounded active-set nonnegative Tikhonov DRT; credible intervals are a linear-Gaussian approximation when requested"
         } else {
             "unconstrained Tikhonov DRT; use --nonnegative to enforce bounded nonnegative coefficients"
@@ -892,6 +1077,16 @@ fn write_drt_svgs(
         &result.plot_gamma,
         "DRT Gamma",
     )?;
+    if let Some(bayesian) = &result.bayesian {
+        write_drt_bayesian_svg(
+            &out.join("drt_gamma_bayesian.svg"),
+            &result.plot_tau,
+            &result.plot_gamma,
+            &bayesian.plot_gamma_mean,
+            &bayesian.plot_gamma_lower,
+            &bayesian.plot_gamma_upper,
+        )?;
+    }
     write_nyquist_svg(
         &out.join("nyquist_reconstruction.svg"),
         "DRT Nyquist Reconstruction",

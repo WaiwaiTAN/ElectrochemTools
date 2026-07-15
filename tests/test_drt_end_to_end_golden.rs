@@ -109,6 +109,7 @@ fn compare_case(name: &str) {
             regularization_order: summary.regularization_order,
             nonnegative: true,
             credible_intervals: false,
+            bayesian: None,
             solver: DrtSolverOptions {
                 max_iterations: 1_000,
                 tolerance: 1.0e-9,

@@ -25,3 +25,11 @@ fn reads_raw_corrtest_z60_with_metadata() {
     assert_eq!(data.frequency_hz[0], 100000.0);
     assert!((data.z_real[0] - 13.9207).abs() < 1.0e-4);
 }
+
+#[test]
+fn reads_sanitized_bayesian_z60_fixture() {
+    let data = read_eis(Path::new("tests/fixtures/bayesian_eis.z60")).unwrap();
+    assert_eq!(data.len(), 70);
+    assert_eq!(data.frequency_hz.first().copied(), Some(1.0e5));
+    assert_eq!(data.frequency_hz.last().copied(), Some(1.0e-2));
+}

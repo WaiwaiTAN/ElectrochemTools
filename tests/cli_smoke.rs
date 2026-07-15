@@ -1,6 +1,8 @@
 use std::process::Command;
 use std::{fs, path::PathBuf};
 
+const BAYESIAN_FIXTURE: &str = "tests/fixtures/bayesian_eis.z60";
+
 fn eiscli() -> Command {
     Command::new(env!("CARGO_BIN_EXE_eiscli"))
 }
@@ -27,7 +29,126 @@ fn drt_help_succeeds() {
     assert!(stdout.contains("--basis"));
     assert!(stdout.contains("--shape-control"));
     assert!(stdout.contains("--shape-coefficient"));
+    assert!(stdout.contains("--bayesian"));
+    assert!(stdout.contains("--bayesian-run"));
+    assert!(stdout.contains("--bayesian-samples"));
+    assert!(stdout.contains("--bayesian-burn-in"));
+    assert!(stdout.contains("--bayesian-seed"));
+    assert!(stdout.contains("--bayesian-chains"));
     assert!(!stdout.contains("--drop-positive-imag"));
+}
+
+#[test]
+fn bayesian_drt_writes_seeded_hmc_outputs_and_manifest_configuration() {
+    let out = std::env::temp_dir().join(format!(
+        "electrochem_tools_bayesian_drt_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&out);
+    let output = eiscli()
+        .args([
+            "drt",
+            "-i",
+            BAYESIAN_FIXTURE,
+            "--n-tau",
+            "3",
+            "--bayesian",
+            "--bayesian-samples",
+            "1000",
+            "--bayesian-burn-in",
+            "100",
+            "--bayesian-seed",
+            "42",
+            "--bayesian-chains",
+            "4",
+            "--out-root",
+        ])
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let result = out.join("bayesian_eis_drt");
+    let csv = fs::read_to_string(result.join("gamma_bayesian.csv")).unwrap();
+    let mut rows = csv.lines();
+    assert_eq!(
+        rows.next().unwrap(),
+        "tau,log10_tau,gamma_map,gamma_mean,gamma_lower_99,gamma_upper_99"
+    );
+    assert_eq!(rows.count(), 3);
+    assert!(result.join("bayesian_summary.json").is_file());
+    assert!(result.join("bayesian_diagnostics.csv").is_file());
+    assert!(result.join("drt_gamma_bayesian.svg").is_file());
+
+    let summary: serde_json::Value =
+        serde_json::from_slice(&fs::read(result.join("bayesian_summary.json")).unwrap()).unwrap();
+    assert_eq!(summary["method"], "exact_constrained_gaussian_hmc");
+    assert_eq!(summary["chains"], 4);
+    assert_eq!(summary["samples_per_chain"], 1000);
+    assert_eq!(summary["total_draws"], 4000);
+    assert_eq!(summary["burn_in_per_chain"], 100);
+    assert_eq!(summary["retained_draws_per_chain"], 900);
+    assert_eq!(summary["retained_draws"], 3600);
+    assert_eq!(summary["seed"], 42);
+    assert_eq!(summary["chain_seeds"].as_array().unwrap().len(), 4);
+    assert_eq!(summary["credible_level"], 0.99);
+    assert!(summary["max_split_r_hat"].is_number());
+    assert!(summary["min_effective_sample_size"].is_number());
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(result.join("run.json")).unwrap()).unwrap();
+    assert_eq!(manifest["configuration"]["bayesian"]["enabled"], true);
+    assert_eq!(manifest["configuration"]["bayesian"]["chains"], 4);
+    assert_eq!(manifest["configuration"]["nonnegative"], true);
+    assert!(
+        manifest["outputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|path| path == "gamma_bayesian.csv")
+    );
+}
+
+#[test]
+fn bayesian_drt_rejects_invalid_or_misplaced_sampler_options() {
+    let missing_mode = eiscli()
+        .args(["drt", "-i", BAYESIAN_FIXTURE, "--bayesian-seed", "42"])
+        .output()
+        .unwrap();
+    assert!(!missing_mode.status.success());
+
+    let too_few = eiscli()
+        .args([
+            "drt",
+            "-i",
+            BAYESIAN_FIXTURE,
+            "--bayesian",
+            "--bayesian-samples",
+            "999",
+        ])
+        .output()
+        .unwrap();
+    assert!(!too_few.status.success());
+    assert!(
+        String::from_utf8_lossy(&too_few.stderr)
+            .contains("requires at least 1000 samples per chain")
+    );
+
+    let conflicting_intervals = eiscli()
+        .args([
+            "drt",
+            "-i",
+            BAYESIAN_FIXTURE,
+            "--bayesian",
+            "--credible-intervals",
+        ])
+        .output()
+        .unwrap();
+    assert!(!conflicting_intervals.status.success());
 }
 
 #[test]
