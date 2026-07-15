@@ -17,6 +17,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+      - name: Resolve package metadata
+        id: package
+        shell: pwsh
+        run: |
+          $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
+          $package = $metadata.packages | Where-Object name -eq 'ElectrochemTools' | Select-Object -First 1
+          if (-not $package) { throw 'ElectrochemTools package not found in Cargo metadata' }
+          $version = $package.version
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match Cargo package version v$version"
+          }
+          $archive = "electrochem-tools-v$version-x86_64-pc-windows-msvc.zip"
+          $notes = "docs/release-notes-v$version.md"
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and -not (Test-Path -LiteralPath $notes)) {
+            throw "Missing release notes: $notes"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "archive=$archive" >> $env:GITHUB_OUTPUT
+          "notes=$notes" >> $env:GITHUB_OUTPUT
       - name: Debug tests
         run: cargo test --locked --all-targets --all-features
       - name: Release tests
@@ -27,32 +46,37 @@ jobs:
       - name: CLI and fixture smoke tests
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           $exe = '.\target\x86_64-pc-windows-msvc\release\eiscli.exe'
           & $exe --version
           & $exe --help
           & $exe clean --help
           & $exe drt --help
           & $exe fit-ecm --help
-          & $exe clean -i examples/data/eis_cleaned.csv --out-root target/smoke-clean
+          & $exe clean -i examples/data/eis.z60 --out-root target/smoke-clean
           & $exe drt -i examples/data/eis_cleaned.csv --nonnegative --n-tau 30 --out-root target/smoke-drt
           & $exe fit-ecm -i examples/data/eis_cleaned.csv --model R_QR --auto-init --out-root target/smoke-ecm
-          if (Test-Path target/smoke-clean/eis_cleaned/run.json) { throw 'clean wrote run.json' }
-          Get-Content target/smoke-clean/eis_cleaned/input_report.json | ConvertFrom-Json | Out-Null
+          if (Test-Path target/smoke-clean/eis_cleaned) { throw 'clean wrote the obsolete per-input directory layout' }
+          if (Test-Path target/smoke-clean/batch_summary.csv) { throw 'clean wrote batch_summary.csv' }
+          if (Test-Path target/smoke-clean/run.json) { throw 'clean wrote run.json' }
+          Get-Content target/smoke-clean/eis_clean_state.json | ConvertFrom-Json | Out-Null
           $drt = Get-Content target/smoke-drt/eis_drt/run.json | ConvertFrom-Json
           $ecm = Get-Content target/smoke-ecm/eis_fit_ecm/run.json | ConvertFrom-Json
           if ($drt.status -ne 'success' -or $ecm.status -ne 'success') { throw 'computation manifest not successful' }
-          foreach ($path in @('target/smoke-clean/eis_cleaned/cleaned.csv', 'target/smoke-drt/eis_drt/gamma.csv', 'target/smoke-drt/eis_drt/drt_gamma.svg', 'target/smoke-ecm/eis_fit_ecm/fit_params.json', 'target/smoke-ecm/eis_fit_ecm/nyquist_fit.svg')) {
+          foreach ($path in @('target/smoke-clean/eis_cleaned.csv', 'target/smoke-clean/eis_cleaned.z60', 'target/smoke-drt/batch_summary.csv', 'target/smoke-drt/eis_drt/gamma.csv', 'target/smoke-drt/eis_drt/drt_gamma.svg', 'target/smoke-ecm/batch_summary.csv', 'target/smoke-ecm/eis_fit_ecm/fit_params.json', 'target/smoke-ecm/eis_fit_ecm/nyquist_fit.svg')) {
             if (-not (Test-Path $path)) { throw "Missing smoke output: $path" }
           }
       - uses: actions/upload-artifact@v4
         with:
-          name: electrochem-tools-v0.1.1-x86_64-pc-windows-msvc
+          name: electrochem-tools-v${{ steps.package.outputs.version }}-x86_64-pc-windows-msvc
+          if-no-files-found: error
           path: |
-            target/dist/electrochem-tools-v0.1.1-x86_64-pc-windows-msvc.zip
+            target/dist/${{ steps.package.outputs.archive }}
             target/dist/SHA256SUMS.txt
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
-        run: gh release create $env:GITHUB_REF_NAME target/dist/electrochem-tools-v0.1.1-x86_64-pc-windows-msvc.zip target/dist/SHA256SUMS.txt --verify-tag --title $env:GITHUB_REF_NAME --notes-file docs/release-notes-v0.1.1.md
+        run: gh release create $env:GITHUB_REF_NAME "target/dist/${{ steps.package.outputs.archive }}" target/dist/SHA256SUMS.txt --verify-tag --title $env:GITHUB_REF_NAME --notes-file "${{ steps.package.outputs.notes }}"
