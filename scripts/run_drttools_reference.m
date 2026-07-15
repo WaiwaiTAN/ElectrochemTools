@@ -2,7 +2,7 @@ repo_root = fileparts(fileparts(mfilename('fullpath')));
 addpath(genpath(fullfile(repo_root, 'DRTtools')));
 
 if ~exist('DRT_INPUT_CSV', 'var')
-    DRT_INPUT_CSV = fullfile(repo_root, 'examples', 'data', 'eis_cleaned.csv');
+    DRT_INPUT_CSV = fullfile(repo_root, 'tests', 'fixtures', 'eis_cleaned.csv');
 end
 if ~exist('DRT_OUTPUT_DIR', 'var')
     DRT_OUTPUT_DIR = fullfile(repo_root, 'target', 'matlab_reference');

@@ -7,6 +7,10 @@
 - `eiscli drt --bayesian` now provides seeded DRTtools-style exact HMC sampling of the nonnegative DRT posterior, concurrent independent chains, split-R-hat/ESS diagnostics, 99% R-5 bounds, Bayesian CSV/JSON/SVG outputs, and resume-safe sampler configuration.
 - Added a metadata-sanitized real `.z60` fixture for Bayesian CLI and input-reader tests.
 
+### Changed
+
+- Consolidated sample inputs under `tests/fixtures` and removed the redundant generated `examples` tree.
+
 ## [0.1.1] - 2026-07-13
 
 ### Added

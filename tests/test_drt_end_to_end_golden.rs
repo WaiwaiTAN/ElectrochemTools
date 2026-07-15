@@ -93,7 +93,7 @@ fn compare_case(name: &str) {
         }
     );
 
-    let data = read_eis_with_cleaning(Path::new("examples/data/eis_cleaned.csv"), false).unwrap();
+    let data = read_eis_with_cleaning(Path::new("tests/fixtures/eis_cleaned.csv"), false).unwrap();
     let result = solve_drt(
         &data,
         &DrtSettings {

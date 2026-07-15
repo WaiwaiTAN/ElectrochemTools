@@ -5,7 +5,7 @@ use std::path::Path;
 
 #[test]
 fn compares_against_exported_matlab_drttools_files() {
-    let data = read_eis_with_cleaning(Path::new("examples/data/eis.z60"), true).unwrap();
+    let data = read_eis_with_cleaning(Path::new("tests/fixtures/eis_cleaned.csv"), false).unwrap();
     let result = solve_drt(
         &data,
         &DrtSettings {

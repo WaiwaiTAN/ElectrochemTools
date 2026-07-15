@@ -84,7 +84,7 @@ fn gaussian_simple_run_matches_matlab_drttools() {
     let summary: Summary =
         serde_json::from_slice(&std::fs::read(root().join("summary.json")).unwrap()).unwrap();
     assert_eq!(summary.regularization_order, 1);
-    let data = read_eis_with_cleaning(Path::new("examples/data/eis_cleaned.csv"), false).unwrap();
+    let data = read_eis_with_cleaning(Path::new("tests/fixtures/eis_cleaned.csv"), false).unwrap();
     let tau = make_drttools_tau_grid(&data).unwrap();
     let discretization =
         GaussianDiscretization::new(tau.clone(), ShapeControl::Fwhm, summary.shape_coefficient)

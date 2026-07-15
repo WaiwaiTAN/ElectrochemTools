@@ -162,7 +162,7 @@ fn gaussian_drt_cli_uses_drttools_centers_and_records_shape_settings() {
         .args([
             "drt",
             "-i",
-            "examples/data/eis_cleaned.csv",
+            BAYESIAN_FIXTURE,
             "--basis",
             "gaussian",
             "--shape-control",
@@ -180,9 +180,10 @@ fn gaussian_drt_cli_uses_drttools_centers_and_records_shape_settings() {
         .status()
         .unwrap();
     assert!(status.success());
-    let summary: serde_json::Value =
-        serde_json::from_slice(&fs::read(out.join("eis_drt/residual_summary.json")).unwrap())
-            .unwrap();
+    let summary: serde_json::Value = serde_json::from_slice(
+        &fs::read(out.join("bayesian_eis_drt/residual_summary.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(summary["basis"], "gaussian");
     assert_eq!(summary["tau_grid"], "drttools");
     assert_eq!(summary["shape_control"], "fwhm");
@@ -190,12 +191,12 @@ fn gaussian_drt_cli_uses_drttools_centers_and_records_shape_settings() {
     assert!(summary["epsilon"].as_f64().unwrap() > 0.0);
     assert_eq!(summary["n_tau"], summary["n_points"]);
 
-    let gamma_rows = fs::read_to_string(out.join("eis_drt/gamma.csv"))
+    let gamma_rows = fs::read_to_string(out.join("bayesian_eis_drt/gamma.csv"))
         .unwrap()
         .lines()
         .count()
         - 1;
-    let svg = fs::read_to_string(out.join("eis_drt/drt_gamma.svg")).unwrap();
+    let svg = fs::read_to_string(out.join("bayesian_eis_drt/drt_gamma.svg")).unwrap();
     assert!(svg.contains(r#"id="title""#));
     assert!(svg.contains(r#"id="xlabel""#));
     assert!(svg.contains(r"$\tau$ / \unit{\second}"));
@@ -204,8 +205,8 @@ fn gaussian_drt_cli_uses_drttools_centers_and_records_shape_settings() {
     assert!(svg.contains(r#"id="legend-gamma""#));
     assert!(svg.contains("$10^{-1}$"));
     assert!(!svg.contains(">10^-1<"));
-    assert!(!out.join("eis_drt/drt_gamma_latex.svg").exists());
-    assert!(!out.join("eis_drt/drt_gamma_plain.svg").exists());
+    assert!(!out.join("bayesian_eis_drt/drt_gamma_latex.svg").exists());
+    assert!(!out.join("bayesian_eis_drt/drt_gamma_plain.svg").exists());
     let plotted_points = svg
         .split_once("<polyline")
         .unwrap()
@@ -490,12 +491,7 @@ fn drt_solver_failure_returns_nonzero_without_final_result() {
     ));
     let _ = fs::remove_dir_all(&out);
     let status = eiscli()
-        .args([
-            "drt",
-            "-i",
-            "examples/data/eis_cleaned.csv",
-            "--nonnegative",
-        ])
+        .args(["drt", "-i", BAYESIAN_FIXTURE, "--nonnegative"])
         .args([
             "--n-tau",
             "30",
@@ -507,11 +503,11 @@ fn drt_solver_failure_returns_nonzero_without_final_result() {
         .status()
         .unwrap();
     assert!(!status.success());
-    assert!(!out.join("eis_drt/gamma.csv").exists());
+    assert!(!out.join("bayesian_eis_drt/gamma.csv").exists());
     let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(out.join("eis_drt/run.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(out.join("bayesian_eis_drt/run.json")).unwrap()).unwrap();
     assert_eq!(manifest["status"], "failed");
-    assert!(!out.join("eis_drt/run.json.tmp").exists());
+    assert!(!out.join("bayesian_eis_drt/run.json.tmp").exists());
     assert!(out.join("batch_summary.csv").is_file());
 }
 
@@ -525,7 +521,7 @@ fn fit_ecm_accepts_parenthesized_rc_warburg_model() {
             .args([
                 "fit-ecm",
                 "-i",
-                "examples/data/eis_cleaned.csv",
+                BAYESIAN_FIXTURE,
                 "--model",
                 "R_(CR)_W",
                 "--auto-init",
@@ -536,9 +532,10 @@ fn fit_ecm_accepts_parenthesized_rc_warburg_model() {
             .unwrap()
             .success()
     );
-    let summary: serde_json::Value =
-        serde_json::from_slice(&fs::read(out.join("eis_fit_ecm/fit_params.json")).unwrap())
-            .unwrap();
+    let summary: serde_json::Value = serde_json::from_slice(
+        &fs::read(out.join("bayesian_eis_fit_ecm/fit_params.json")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(summary["model"], "R_CR_W");
     assert!(summary["parameters"]["C1"].is_number());
     assert!(summary["parameters"]["sigma_w"].is_number());
@@ -552,35 +549,26 @@ fn successful_drt_writes_structured_solver_report() {
     ));
     let _ = fs::remove_dir_all(&out);
     let status = eiscli()
-        .args([
-            "drt",
-            "-i",
-            "examples/data/eis_cleaned.csv",
-            "--nonnegative",
-        ])
+        .args(["drt", "-i", BAYESIAN_FIXTURE, "--nonnegative"])
         .args(["--n-tau", "30", "--out-root"])
         .arg(&out)
         .status()
         .unwrap();
     assert!(status.success());
     let report: serde_json::Value =
-        serde_json::from_slice(&fs::read(out.join("eis_drt/solver_report.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(out.join("bayesian_eis_drt/solver_report.json")).unwrap())
+            .unwrap();
     assert_eq!(report["converged"], true);
     assert!(report["kkt_violation"].is_number());
     let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(out.join("eis_drt/run.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(out.join("bayesian_eis_drt/run.json")).unwrap()).unwrap();
     assert_eq!(manifest["status"], "success");
     assert_eq!(manifest["command"], "drt");
     assert!(manifest["input"]["sha256"].as_str().unwrap().len() == 64);
     assert!(manifest["configuration_sha256"].as_str().unwrap().len() == 64);
 
     let resumed = eiscli()
-        .args([
-            "drt",
-            "-i",
-            "examples/data/eis_cleaned.csv",
-            "--nonnegative",
-        ])
+        .args(["drt", "-i", BAYESIAN_FIXTURE, "--nonnegative"])
         .args(["--n-tau", "30", "--resume", "--out-root"])
         .arg(&out)
         .output()
@@ -593,12 +581,7 @@ fn successful_drt_writes_structured_solver_report() {
     );
 
     let changed = eiscli()
-        .args([
-            "drt",
-            "-i",
-            "examples/data/eis_cleaned.csv",
-            "--nonnegative",
-        ])
+        .args(["drt", "-i", BAYESIAN_FIXTURE, "--nonnegative"])
         .args(["--n-tau", "31", "--resume", "--out-root"])
         .arg(&out)
         .output()
@@ -611,12 +594,7 @@ fn successful_drt_writes_structured_solver_report() {
     );
     assert!(
         eiscli()
-            .args([
-                "drt",
-                "-i",
-                "examples/data/eis_cleaned.csv",
-                "--nonnegative",
-            ])
+            .args(["drt", "-i", BAYESIAN_FIXTURE, "--nonnegative",])
             .args(["--n-tau", "31", "--overwrite", "--out-root"])
             .arg(&out)
             .status()
@@ -635,7 +613,7 @@ fn fit_ecm_writes_and_resumes_success_manifest() {
     let args = [
         "fit-ecm",
         "-i",
-        "examples/data/eis_cleaned.csv",
+        BAYESIAN_FIXTURE,
         "--model",
         "R_QR",
         "--auto-init",
@@ -643,7 +621,8 @@ fn fit_ecm_writes_and_resumes_success_manifest() {
     ];
     assert!(eiscli().args(args).arg(&out).status().unwrap().success());
     let manifest: serde_json::Value =
-        serde_json::from_slice(&fs::read(out.join("eis_fit_ecm/run.json")).unwrap()).unwrap();
+        serde_json::from_slice(&fs::read(out.join("bayesian_eis_fit_ecm/run.json")).unwrap())
+            .unwrap();
     assert_eq!(manifest["status"], "success");
     assert_eq!(manifest["command"], "fit-ecm");
     assert!(

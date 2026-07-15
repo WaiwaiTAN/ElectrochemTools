@@ -2,7 +2,7 @@
 
 Piecewise-linear golden data was generated on 2026-07-10 and the Gaussian Simple Run golden on 2026-07-13 with MATLAB `23.2.0.2668659 (R2023b) Update 9`, Optimization Toolbox available, and `quadprog` present. The reference checkout is Mycroft2333/DRTtools commit `034d9c4c4a4916a38a0e2f10381d931ffe1981b3`. Provenance and case configuration are embedded in every `metadata.json` and `summary.json` under `tests/golden/drttools/end_to_end`.
 
-All cases use `examples/data/eis_cleaned.csv`, `tau = 1/frequency`, lambda `1e-3`, combined real/imaginary fitting, nonnegative gamma, and nonnegative `R_inf`. The inductance constraint is either fixed zero or nonnegative in both MATLAB and Rust.
+All cases use `tests/fixtures/eis_cleaned.csv`, `tau = 1/frequency`, lambda `1e-3`, combined real/imaginary fitting, nonnegative gamma, and nonnegative `R_inf`. The inductance constraint is either fixed zero or nonnegative in both MATLAB and Rust.
 
 | Case | Basis | Order | Inductance | coefficient max abs / L2 rel | gamma max abs / L2 rel | reconstructed Z max abs / L2 rel | objective rel |
 | --- | --- | ---: | --- | --- | --- | --- | ---: |

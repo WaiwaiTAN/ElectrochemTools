@@ -54,17 +54,17 @@ jobs:
           & $exe clean --help
           & $exe drt --help
           & $exe fit-ecm --help
-          & $exe clean -i examples/data/eis.z60 --out-root target/smoke-clean
-          & $exe drt -i examples/data/eis_cleaned.csv --nonnegative --n-tau 30 --out-root target/smoke-drt
-          & $exe fit-ecm -i examples/data/eis_cleaned.csv --model R_QR --auto-init --out-root target/smoke-ecm
-          if (Test-Path target/smoke-clean/eis_cleaned) { throw 'clean wrote the obsolete per-input directory layout' }
+          & $exe clean -i tests/fixtures/bayesian_eis.z60 --out-root target/smoke-clean
+          & $exe drt -i tests/fixtures/bayesian_eis.z60 --nonnegative --n-tau 30 --out-root target/smoke-drt
+          & $exe fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR --auto-init --out-root target/smoke-ecm
+          if (Test-Path target/smoke-clean/bayesian_eis_cleaned) { throw 'clean wrote the obsolete per-input directory layout' }
           if (Test-Path target/smoke-clean/batch_summary.csv) { throw 'clean wrote batch_summary.csv' }
           if (Test-Path target/smoke-clean/run.json) { throw 'clean wrote run.json' }
-          Get-Content target/smoke-clean/eis_clean_state.json | ConvertFrom-Json | Out-Null
-          $drt = Get-Content target/smoke-drt/eis_drt/run.json | ConvertFrom-Json
-          $ecm = Get-Content target/smoke-ecm/eis_fit_ecm/run.json | ConvertFrom-Json
+          Get-Content target/smoke-clean/bayesian_eis_clean_state.json | ConvertFrom-Json | Out-Null
+          $drt = Get-Content target/smoke-drt/bayesian_eis_drt/run.json | ConvertFrom-Json
+          $ecm = Get-Content target/smoke-ecm/bayesian_eis_fit_ecm/run.json | ConvertFrom-Json
           if ($drt.status -ne 'success' -or $ecm.status -ne 'success') { throw 'computation manifest not successful' }
-          foreach ($path in @('target/smoke-clean/eis_cleaned.csv', 'target/smoke-clean/eis_cleaned.z60', 'target/smoke-drt/batch_summary.csv', 'target/smoke-drt/eis_drt/gamma.csv', 'target/smoke-drt/eis_drt/drt_gamma.svg', 'target/smoke-ecm/batch_summary.csv', 'target/smoke-ecm/eis_fit_ecm/fit_params.json', 'target/smoke-ecm/eis_fit_ecm/nyquist_fit.svg')) {
+          foreach ($path in @('target/smoke-clean/bayesian_eis_cleaned.csv', 'target/smoke-clean/bayesian_eis_cleaned.z60', 'target/smoke-drt/batch_summary.csv', 'target/smoke-drt/bayesian_eis_drt/gamma.csv', 'target/smoke-drt/bayesian_eis_drt/drt_gamma.svg', 'target/smoke-ecm/batch_summary.csv', 'target/smoke-ecm/bayesian_eis_fit_ecm/fit_params.json', 'target/smoke-ecm/bayesian_eis_fit_ecm/nyquist_fit.svg')) {
             if (-not (Test-Path $path)) { throw "Missing smoke output: $path" }
           }
       - uses: actions/upload-artifact@v4

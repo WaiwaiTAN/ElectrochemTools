@@ -96,7 +96,7 @@ Frequencies are sorted from high to low after reading. Use `--flip-imag` only wh
 The shared reader is strict by default: malformed rows, non-finite values, non-positive frequencies, duplicate frequencies, missing columns, and ambiguous columns are errors. `eiscli clean --lenient` skips invalid rows and records counts by reason in `<input-stem>_clean_state.json`. Sign conversion is explicit through `--imag-sign preserve|flip|negative-capacitive|positive-capacitive`.
 
 ```bash
-eiscli clean -i examples/data/eis.z60 --out-root result
+eiscli clean -i tests/fixtures/bayesian_eis.z60 --out-root result
 ```
 
 DRT model:
@@ -123,23 +123,25 @@ Z_W  = sigma_w (1-j) / sqrt(omega)
 
 `W` is the semi-infinite Warburg element. The supported model names are `R_CR`, `R_QR`, `R_QR_CR`, `R_CR_CR`, and `R_QR_QR`; append `_W` to any name to add Warburg diffusion in series. Parenthesized literature spellings such as `R_(QR)_(CR)_W` are also accepted. Branch 1 uses `--r1` plus `--c1` or `--q1 --n1`; branch 2 uses the corresponding `2` options. For compatibility, `--rct`, `--c`, `--q`, and `--n` remain aliases for the branch-1 options. Resistances are in ohms, capacitances in farads, and `Q` follows the CPE admittance definition above.
 
+The repository's sanitized sample input is `tests/fixtures/bayesian_eis.z60`.
+
 Examples:
 
 ```bash
-eiscli drt -i examples/data/eis_cleaned.csv --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100
-eiscli drt -i examples/data/eis.z60 --auto-lambda --nonnegative --credible-intervals
-eiscli drt -i examples/data/eis.z60 --tau-grid drttools --lambda 1e-3 --nonnegative
-eiscli drt -i examples/data/eis.z60 --basis gaussian --shape-control fwhm --shape-coefficient 0.5 --lambda 1e-3 --regularization-order 1 --nonnegative
+eiscli drt -i tests/fixtures/bayesian_eis.z60 --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100
+eiscli drt -i tests/fixtures/bayesian_eis.z60 --auto-lambda --nonnegative --credible-intervals
+eiscli drt -i tests/fixtures/bayesian_eis.z60 --tau-grid drttools --lambda 1e-3 --nonnegative
+eiscli drt -i tests/fixtures/bayesian_eis.z60 --basis gaussian --shape-control fwhm --shape-coefficient 0.5 --lambda 1e-3 --regularization-order 1 --nonnegative
 eiscli drt -i tests/fixtures/bayesian_eis.z60 --basis gaussian --lambda 1e-3 --bayesian --bayesian-chains 4 --bayesian-samples 1000 --bayesian-burn-in 250 --bayesian-seed 42
-eiscli drt -i examples/data/eis.z60 --tau-grid drttools --lambda 1e-3 --nonnegative --fit-inductance
-eiscli drt -i examples/data/eis.z60 --tau-grid drttools \
+eiscli drt -i tests/fixtures/bayesian_eis.z60 --tau-grid drttools --lambda 1e-3 --nonnegative --fit-inductance
+eiscli drt -i tests/fixtures/bayesian_eis.z60 --tau-grid drttools \
   --compare-matlab-drt tests/golden/drttools/eis_clean_matlab_drttools_drt_peaks.csv \
   --compare-matlab-regression tests/golden/drttools/eis_clean_matlab_drttools_eis_regression.txt
-eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR --out-root result/ --rs 0.5 --rct 20 --q 1e-3 --n 0.85
-eiscli fit-ecm -i examples/data/eis.z60 --model R_QR --auto-init --include-correlation-matrix
-eiscli fit-ecm -i examples/data/eis.z60 --model R_QR --auto-init --keep-positive-imag
-eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR_CR --auto-init --out-root result/
-eiscli fit-ecm -i examples/data/eis_cleaned.csv --model R_QR_QR_W --auto-init --out-root result/
+eiscli fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR --out-root result/ --rs 0.5 --rct 20 --q 1e-3 --n 0.85
+eiscli fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR --auto-init --include-correlation-matrix
+eiscli fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR --auto-init --keep-positive-imag
+eiscli fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR_CR --auto-init --out-root result/
+eiscli fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR_QR_W --auto-init --out-root result/
 ```
 
 All file commands accept one or more `-i/--input` paths. Use `--jobs 1` for serial execution; the default is the smaller of available logical threads and input count. Both `eiscli clean` and `clean_eis` use the same flat three-file layout, support batch cleaning, require `--overwrite` when a target file already exists, and do not write `batch_summary.csv` or `run.json`. DRT and ECM results use `<input-stem>_drt` or `<input-stem>_fit_ecm` directories below `--out-root` with a stable `batch_summary.csv`. For `drt` and `fit-ecm`, `--resume` only skips a successful run whose input SHA-256, numerical configuration SHA-256, command, schema, and declared output files still match; otherwise it refuses to reuse the directory.
@@ -147,8 +149,8 @@ All file commands accept one or more `-i/--input` paths. Use `--jobs 1` for seri
 Development examples:
 
 ```bash
-cargo run --release --bin eiscli -- drt -i examples/data/eis_cleaned.csv --lambda 1e-3 --out-root result/
-cargo run --release --bin eiscli -- fit-ecm -i examples/data/eis_cleaned.csv --model R_QR --auto-init --out-root result/
+cargo run --release --bin eiscli -- drt -i tests/fixtures/bayesian_eis.z60 --lambda 1e-3 --out-root result/
+cargo run --release --bin eiscli -- fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR --auto-init --out-root result/
 ```
 
 DRT outputs:
@@ -196,7 +198,7 @@ Bayesian CLI tests use `tests/fixtures/bayesian_eis.z60`, a real-data fixture wi
 
 When MATLAB DRTtools export files are available, `--compare-matlab-drt` and `--compare-matlab-regression` produce `matlab_comparison.json` with gamma and reconstructed-impedance RMSE values. This is a diagnostic comparison, not an assertion that both tools should match exactly.
 
-For local MATLAB reference generation without opening the DRTtools GUI, run `scripts/run_drttools_reference.m` in MATLAB batch mode from the repository root. It reads `examples/data/eis_cleaned.csv` by default and writes DRTtools-compatible files under `target/matlab_reference/`; the script checks for `quadprog` / Optimization Toolbox before solving. The currently committed exports are diagnostic fixtures only and do not establish matrix-level parity.
+For local MATLAB reference generation without opening the DRTtools GUI, run `scripts/run_drttools_reference.m` in MATLAB batch mode from the repository root. It reads the pinned golden-test input `tests/fixtures/eis_cleaned.csv` by default and writes DRTtools-compatible files under `target/matlab_reference/`; the script checks for `quadprog` / Optimization Toolbox before solving. The currently committed exports are diagnostic fixtures only and do not establish matrix-level parity.
 
 ECM fitting outputs:
 

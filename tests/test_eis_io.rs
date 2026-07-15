@@ -1,9 +1,24 @@
 use electrochem_tools::eis_io::read_eis;
-use std::path::Path;
+use electrochem_tools::types::EisData;
+use std::{fs, path::Path};
+
+fn read_temporary_csv(name: &str, contents: &str) -> EisData {
+    let path = std::env::temp_dir().join(format!(
+        "electrochem_tools_{name}_{}.csv",
+        std::process::id()
+    ));
+    fs::write(&path, contents).unwrap();
+    let data = read_eis(&path).unwrap();
+    fs::remove_file(path).unwrap();
+    data
+}
 
 #[test]
 fn reads_header_csv_and_sorts_high_to_low() {
-    let data = read_eis(Path::new("examples/data/eis_simple.csv")).unwrap();
+    let data = read_temporary_csv(
+        "header",
+        "frequency,Z_real,Z_imag\n1000,1.019999,-0.199980\n100,2,-2\n10,4.980001,-0.199980\n",
+    );
     assert_eq!(data.len(), 3);
     assert_eq!(data.frequency_hz, vec![1000.0, 100.0, 10.0]);
     assert!(data.z_imag.iter().all(|value| *value < 0.0));
@@ -11,19 +26,13 @@ fn reads_header_csv_and_sorts_high_to_low() {
 
 #[test]
 fn reads_clean_eis_no_header_csv() {
-    let data = read_eis(Path::new("examples/data/eis_clean_eis_no_header.csv")).unwrap();
+    let data = read_temporary_csv(
+        "headerless",
+        "1000,1.019999,-0.199980\n100,2,-2\n10,4.980001,-0.199980\n",
+    );
     assert_eq!(data.frequency_hz[0], 1000.0);
     assert_eq!(data.z_real[1], 2.0);
     assert_eq!(data.z_imag[1], -2.0);
-}
-
-#[test]
-fn reads_raw_corrtest_z60_with_metadata() {
-    let data = read_eis(Path::new("examples/data/eis.z60")).unwrap();
-    assert_eq!(data.len(), 60);
-    assert!(data.frequency_hz[0] > data.frequency_hz[data.len() - 1]);
-    assert_eq!(data.frequency_hz[0], 100000.0);
-    assert!((data.z_real[0] - 13.9207).abs() < 1.0e-4);
 }
 
 #[test]

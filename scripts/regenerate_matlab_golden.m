@@ -6,7 +6,7 @@ if exist('quadprog', 'file') ~= 2 || ~license('test', 'Optimization_Toolbox')
     error('Optimization Toolbox with quadprog is required.');
 end
 
-input_relative = fullfile('examples', 'data', 'eis_cleaned.csv');
+input_relative = fullfile('tests', 'fixtures', 'eis_cleaned.csv');
 input_path = fullfile(repo_root, input_relative);
 output_root = fullfile(repo_root, 'tests', 'golden', 'drttools', 'end_to_end');
 cases = {

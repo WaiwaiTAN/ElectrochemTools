@@ -4,7 +4,7 @@
   "DRTtools_commit": "034d9c4c4a4916a38a0e2f10381d931ffe1981b3",
   "generation_script": "scripts/regenerate_matlab_golden.m",
   "generation_timestamp": "2026-07-13T10:28:45Z",
-  "input_fixture": "examples/data/eis_cleaned.csv",
+  "input_fixture": "tests/fixtures/eis_cleaned.csv",
   "case_configuration": {
     "basis": "Gaussian",
     "data_used": "Combined Re-Im",
