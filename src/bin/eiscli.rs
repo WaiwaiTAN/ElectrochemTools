@@ -5,7 +5,8 @@ use electrochem_tools::batch::{
 };
 use electrochem_tools::drt::{
     BayesianSettings, DrtBasis, DrtConstraintConfig, DrtSettings, DrtSolverOptions, ShapeControl,
-    SolverReport, TauGridMode, scan_lambda, solve_drt,
+    SolverReport, TauGridMode, estimate_kk_consistency, infer_tau_bounds, make_log_tau_grid,
+    scan_lambda, solve_drt,
 };
 use electrochem_tools::drt_compare::compare_with_matlab_outputs;
 use electrochem_tools::ecm::{EcmModelSpec, EcmParams};
@@ -23,14 +24,11 @@ use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
-#[command(
-    author,
-    version,
-    about = "EIS post-processing CLI for DRT and ECM fitting"
-)]
+#[command(author, version, about = "EIS validation, DRT, and ECM fitting CLI")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -108,6 +106,21 @@ impl From<EcmInitialArgs> for PartialEcmInit {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Score EIS data with a Hilbert/Kramers-Kronig consistency check.
+    Validate {
+        #[arg(short = 'i', long = "input", required = true, num_args = 1..)]
+        input: Vec<PathBuf>,
+        #[arg(long, default_value_t = 1.0e-3)]
+        lambda: f64,
+        #[arg(long, default_value_t = 100)]
+        n_tau: usize,
+        #[arg(long, default_value_t = 1)]
+        regularization_order: usize,
+        #[arg(long)]
+        flip_imag: bool,
+        #[arg(long)]
+        keep_positive_imag: bool,
+    },
     /// Validate and clean one or more EIS files using the shared input layer.
     Clean {
         #[arg(short = 'i', long = "input", required = true, num_args = 1..)]
@@ -323,6 +336,21 @@ struct FitParamsSummary {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Commands::Validate {
+            input,
+            lambda,
+            n_tau,
+            regularization_order,
+            flip_imag,
+            keep_positive_imag,
+        } => run_validate(
+            input,
+            lambda,
+            n_tau,
+            regularization_order,
+            flip_imag,
+            keep_positive_imag,
+        ),
         Commands::Clean {
             input,
             lenient,
@@ -421,6 +449,246 @@ fn main() -> Result<()> {
             batch,
         ),
     }
+}
+
+fn run_validate(
+    inputs: Vec<PathBuf>,
+    lambda: f64,
+    n_tau: usize,
+    regularization_order: usize,
+    flip_imag: bool,
+    keep_positive_imag: bool,
+) -> Result<()> {
+    if !lambda.is_finite() || lambda < 0.0 {
+        bail!("lambda must be finite and non-negative");
+    }
+    if n_tau < 3 {
+        bail!("n_tau must be at least 3");
+    }
+    if regularization_order > 2 {
+        bail!("regularization_order must be 0, 1, or 2");
+    }
+
+    let mut results = Vec::new();
+    let mut failures = Vec::new();
+    for input in inputs {
+        let result = (|| -> Result<ValidationDisplayResult> {
+            let mut data = read_eis_with_cleaning(&input, false)?;
+            if flip_imag {
+                data.flip_imag();
+            }
+            let original_points = data.len();
+            let positive_imag_points = data.z_imag.iter().filter(|&&value| value > 0.0).count();
+            if !keep_positive_imag {
+                data.drop_positive_imag()?;
+            }
+            let (tau_min, tau_max) = infer_tau_bounds(&data)?;
+            let tau = make_log_tau_grid(tau_min, tau_max, n_tau)?;
+            let score = estimate_kk_consistency(&data, &tau, lambda, regularization_order)?;
+            Ok(ValidationDisplayResult {
+                input: input.clone(),
+                score_percent: score.mean_score * 100.0,
+                real_to_imag_rmse_percent: score.real_to_imag_relative_rmse_percent,
+                imag_to_real_rmse_percent: score.imag_to_real_relative_rmse_percent,
+                analyzed_points: data.len(),
+                original_points,
+                positive_imag_points,
+                kept_positive_imag: keep_positive_imag,
+            })
+        })();
+        match result {
+            Ok(result) => results.push(result),
+            Err(error) => failures.push((input, format!("{error:#}"))),
+        }
+    }
+
+    render_validation_dashboard(&results, &failures, lambda, n_tau, regularization_order);
+    if !failures.is_empty() {
+        bail!("validation failed for {} input(s)", failures.len());
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct ValidationDisplayResult {
+    input: PathBuf,
+    score_percent: f64,
+    real_to_imag_rmse_percent: f64,
+    imag_to_real_rmse_percent: f64,
+    analyzed_points: usize,
+    original_points: usize,
+    positive_imag_points: usize,
+    kept_positive_imag: bool,
+}
+
+fn render_validation_dashboard(
+    results: &[ValidationDisplayResult],
+    failures: &[(PathBuf, String)],
+    lambda: f64,
+    n_tau: usize,
+    regularization_order: usize,
+) {
+    let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+    println!();
+    let spectrum_count = results.len() + failures.len();
+    let spectrum_label = if spectrum_count == 1 {
+        "spectrum"
+    } else {
+        "spectra"
+    };
+    println!(
+        "{}",
+        ansi("1;36", "╭─ Hilbert / Kramers–Kronig consistency", color)
+    );
+    println!(
+        "│ {spectrum_count} {spectrum_label}  ·  λ={lambda:.3e}  ·  τ grid={n_tau}  ·  regularization={regularization_order}"
+    );
+    println!("╰─");
+
+    for (index, result) in results.iter().enumerate() {
+        let file_name = result
+            .input
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("EIS spectrum");
+        let (quality, quality_color) = consistency_quality(result.score_percent);
+        let quality = ansi(quality_color, quality, color);
+        let score_bar = ansi(quality_color, &score_bar(result.score_percent), color);
+        println!();
+        println!(
+            "{}",
+            ansi(
+                "1",
+                &format!("┌─ {}/{}  {file_name}", index + 1, results.len()),
+                color
+            )
+        );
+        println!(
+            "│ Score      {}  {:6.2} / 100  {}",
+            score_bar, result.score_percent, quality
+        );
+        println!(
+            "│ R → Im     {:6.3}% RMSE",
+            result.real_to_imag_rmse_percent
+        );
+        println!(
+            "│ Im → R     {:6.3}% RMSE",
+            result.imag_to_real_rmse_percent
+        );
+        let filtering = if result.kept_positive_imag {
+            format!(
+                "{} positive-imaginary retained",
+                result.positive_imag_points
+            )
+        } else {
+            format!("{} positive-imaginary removed", result.positive_imag_points)
+        };
+        println!(
+            "│ Data       {} / {} points  ·  {filtering}",
+            result.analyzed_points, result.original_points
+        );
+        println!("│ Path       {}", compact_display_path(&result.input));
+        println!("└─");
+    }
+
+    for (input, error) in failures {
+        let file_name = input
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("EIS spectrum");
+        println!();
+        println!("{}", ansi("1;31", &format!("┌─ ERROR  {file_name}"), color));
+        println!("│ Reason     {error}");
+        println!("│ Path       {}", compact_display_path(input));
+        println!("└─");
+    }
+
+    if !results.is_empty() {
+        let average = results
+            .iter()
+            .map(|result| result.score_percent)
+            .sum::<f64>()
+            / results.len() as f64;
+        let high = results
+            .iter()
+            .filter(|result| result.score_percent >= 90.0)
+            .count();
+        let moderate = results
+            .iter()
+            .filter(|result| (75.0..90.0).contains(&result.score_percent))
+            .count();
+        let low = results
+            .iter()
+            .filter(|result| (50.0..75.0).contains(&result.score_percent))
+            .count();
+        let very_low = results.len() - high - moderate - low;
+        println!();
+        println!("{}", ansi("1;36", "Summary", color));
+        println!(
+            "  {} analyzed  ·  average {:5.2}  ·  high {high}  ·  moderate {moderate}  ·  low {low}  ·  very low {very_low}",
+            results.len(),
+            average
+        );
+        println!(
+            "  {}",
+            ansi(
+                "2",
+                "Guide: high ≥90 · moderate ≥75 · low ≥50 · very low <50",
+                color
+            )
+        );
+    }
+    println!();
+}
+
+fn consistency_quality(score: f64) -> (&'static str, &'static str) {
+    if score >= 90.0 {
+        ("HIGH", "1;32")
+    } else if score >= 75.0 {
+        ("MODERATE", "1;36")
+    } else if score >= 50.0 {
+        ("LOW", "1;33")
+    } else {
+        ("VERY LOW", "1;31")
+    }
+}
+
+fn score_bar(score: f64) -> String {
+    const WIDTH: usize = 20;
+    let filled = ((score.clamp(0.0, 100.0) / 100.0) * WIDTH as f64).round() as usize;
+    format!("{}{}", "█".repeat(filled), "░".repeat(WIDTH - filled))
+}
+
+fn ansi(code: &str, text: &str, enabled: bool) -> String {
+    if enabled {
+        format!("\x1b[{code}m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+fn compact_display_path(path: &Path) -> String {
+    let normal_components: Vec<_> = path
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(value) => Some(value),
+            _ => None,
+        })
+        .collect();
+    if normal_components.len() <= 2 {
+        return path.display().to_string();
+    }
+
+    let mut compact = PathBuf::new();
+    for component in path.components() {
+        compact.push(component.as_os_str());
+        if matches!(component, std::path::Component::Normal(_)) {
+            break;
+        }
+    }
+    compact.push("...");
+    compact.push(normal_components.last().expect("path has a file name"));
+    compact.display().to_string()
 }
 
 fn run_clean(

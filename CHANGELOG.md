@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-16
+
 ### Added
 
+- Added `eiscli validate` for lightweight Hilbert/Kramers-Kronig consistency scoring of one or more shell-expanded input paths.
+- Validation results now use a terminal-friendly dashboard with score bars, per-file filtering details, consistency bands, and a batch summary.
+- Validation dashboards abbreviate deep input paths while retaining the drive, first directory, and filename.
 - `eiscli drt --bayesian` now provides seeded DRTtools-style exact HMC sampling of the nonnegative DRT posterior, concurrent independent chains, split-R-hat/ESS diagnostics, 99% R-5 bounds, Bayesian CSV/JSON/SVG outputs, and resume-safe sampler configuration.
 - Added a metadata-sanitized real `.z60` fixture for Bayesian CLI and input-reader tests.
 

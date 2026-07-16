@@ -51,9 +51,11 @@ jobs:
           $exe = '.\target\x86_64-pc-windows-msvc\release\eiscli.exe'
           & $exe --version
           & $exe --help
+          & $exe validate --help
           & $exe clean --help
           & $exe drt --help
           & $exe fit-ecm --help
+          & $exe validate -i tests/fixtures/bayesian_eis.z60 --n-tau 30
           & $exe clean -i tests/fixtures/bayesian_eis.z60 --out-root target/smoke-clean
           & $exe drt -i tests/fixtures/bayesian_eis.z60 --nonnegative --n-tau 30 --out-root target/smoke-drt
           & $exe fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR --auto-init --out-root target/smoke-ecm

@@ -11,7 +11,7 @@ The audited implementation status and known numerical limitations are recorded i
 | Tool | Description |
 |------|-------------|
 | `clean_eis` | Clean EIS data by filtering out invalid data points |
-| `eiscli` | EIS post-processing: piecewise-linear/Gaussian Tikhonov DRT and RC/RQ/Warburg equivalent-circuit fitting |
+| `eiscli` | EIS validation and post-processing: Hilbert consistency scoring, Tikhonov DRT, and equivalent-circuit fitting |
 | `merge_cor` | Merge multiple `.cor` files with time-aligned timestamps |
 | `trim_cv` | Trim cyclic voltammetry data to complete cycles only |
 
@@ -21,7 +21,7 @@ The audited implementation status and known numerical limitations are recorded i
 
 ### Windows release
 
-Prebuilt v0.1.1 binaries are currently provided for 64-bit Windows using the MSVC toolchain. Download `electrochem-tools-v0.1.1-x86_64-pc-windows-msvc.zip` from the GitHub Release, verify it against `SHA256SUMS.txt`, extract it, and run:
+Prebuilt v0.1.2 binaries are currently provided for 64-bit Windows using the MSVC toolchain. Download `electrochem-tools-v0.1.2-x86_64-pc-windows-msvc.zip` from the GitHub Release, verify it against `SHA256SUMS.txt`, extract it, and run:
 
 ```powershell
 .\eiscli.exe --help
@@ -38,7 +38,7 @@ Both cleaning entry points write `<input-stem>_cleaned.csv`, `<input-stem>_clean
 
 ### Build from source
 
-Linux/WSL and macOS users can build from source; v0.1.1 does not claim official prebuilt binaries for those platforms. The core code is designed as cross-platform Rust.
+Linux/WSL and macOS users can build from source; v0.1.2 does not claim official prebuilt binaries for those platforms. The core code is designed as cross-platform Rust.
 
 ```bash
 git clone https://github.com/WaiwaiTAN/ElectrochemTools.git
@@ -79,6 +79,7 @@ Subcommands:
 
 | Command | Description |
 |---------|-------------|
+| `eiscli validate` | Score one or more spectra with a Hilbert/Kramers-Kronig consistency check |
 | `eiscli drt` | Tikhonov DRT using piecewise-linear or Gaussian discretization, with optional Bayesian exact-HMC intervals |
 | `eiscli fit-ecm` | Equivalent-circuit fitting with RC/RQ branches and optional Warburg diffusion |
 | `eiscli clean` | Strict shared EIS validation and cleaning for one or more files |
@@ -128,6 +129,7 @@ The repository's sanitized sample input is `tests/fixtures/bayesian_eis.z60`.
 Examples:
 
 ```bash
+eiscli validate -i tests/fixtures/bayesian_eis.z60
 eiscli drt -i tests/fixtures/bayesian_eis.z60 --lambda 1e-3 --tau-min 1e-6 --tau-max 1e3 --n-tau 100
 eiscli drt -i tests/fixtures/bayesian_eis.z60 --auto-lambda --nonnegative --credible-intervals
 eiscli drt -i tests/fixtures/bayesian_eis.z60 --tau-grid drttools --lambda 1e-3 --nonnegative
@@ -144,7 +146,29 @@ eiscli fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR_CR --auto-init --
 eiscli fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR_QR_W --auto-init --out-root result/
 ```
 
-All file commands accept one or more `-i/--input` paths. Use `--jobs 1` for serial execution; the default is the smaller of available logical threads and input count. Both `eiscli clean` and `clean_eis` use the same flat three-file layout, support batch cleaning, require `--overwrite` when a target file already exists, and do not write `batch_summary.csv` or `run.json`. DRT and ECM results use `<input-stem>_drt` or `<input-stem>_fit_ecm` directories below `--out-root` with a stable `batch_summary.csv`. For `drt` and `fit-ecm`, `--resume` only skips a successful run whose input SHA-256, numerical configuration SHA-256, command, schema, and declared output files still match; otherwise it refuses to reuse the directory.
+`eiscli validate` reports a consistency score from 0 to 100 (higher is better),
+plus the real-to-imaginary and imaginary-to-real relative RMSE values. It uses the
+same regularized DRT cross-reconstruction Hilbert/Kramers-Kronig check emitted by a
+full DRT run, without writing result files. Positive-imaginary points are removed
+by default; use `--keep-positive-imag` to retain them. Interactive terminals show
+a compact dashboard with a score bar, per-file details, and a batch summary. The
+display bands are high (at least 90), moderate (at least 75), low (at least 50),
+and very low (below 50); these are readability aids rather than pass/fail criteria.
+Deep paths are shortened to forms such as `F:\ExperimentData\...\sample.z60`.
+Set the standard `NO_COLOR` environment variable to disable ANSI colors.
+
+For batch input on Windows, let PowerShell resolve the wildcard into path arguments:
+
+```powershell
+eiscli validate -i (Get-ChildItem -File eis*.z60).FullName
+eiscli fit-ecm -i (Get-ChildItem -File eis*.z60).FullName --model R_QR_CR --auto-init --overwrite
+```
+
+Run these commands from the directory containing the files, or give `Get-ChildItem`
+an explicit directory. If the expression matches no files, PowerShell supplies no
+values to `-i` and `eiscli` reports that an input value is required.
+
+All file commands accept one or more `-i/--input` paths. The `clean`, `drt`, and `fit-ecm` commands also accept `--jobs`; use `--jobs 1` for serial execution, while the default is the smaller of available logical threads and input count. Both `eiscli clean` and `clean_eis` use the same flat three-file layout, support batch cleaning, require `--overwrite` when a target file already exists, and do not write `batch_summary.csv` or `run.json`. DRT and ECM results use `<input-stem>_drt` or `<input-stem>_fit_ecm` directories below `--out-root` with a stable `batch_summary.csv`. For `drt` and `fit-ecm`, `--resume` only skips a successful run whose input SHA-256, numerical configuration SHA-256, command, schema, and declared output files still match; otherwise it refuses to reuse the directory.
 
 Development examples:
 

@@ -18,6 +18,47 @@ fn top_level_help_lists_existing_commands() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("drt"));
     assert!(stdout.contains("fit-ecm"));
+    assert!(stdout.contains("validate"));
+}
+
+#[test]
+fn validate_scores_multiple_expanded_inputs_with_hilbert_check() {
+    let root =
+        std::env::temp_dir().join(format!("electrochem_tools_validate_{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    fs::copy(BAYESIAN_FIXTURE, root.join("first.z60")).unwrap();
+    fs::copy(BAYESIAN_FIXTURE, root.join("second.z60")).unwrap();
+
+    let output = eiscli()
+        .args(["validate", "-i"])
+        .arg(root.join("first.z60"))
+        .arg(root.join("second.z60"))
+        .args(["--n-tau", "30"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let score_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with("│ Score"))
+        .collect();
+    assert_eq!(score_lines.len(), 2, "{stdout}");
+    assert!(score_lines.iter().all(|line| line.contains("/ 100")));
+    assert!(stdout.contains("Hilbert / Kramers–Kronig consistency"));
+    assert!(stdout.contains("R → Im"));
+    assert!(stdout.contains("Im → R"));
+    assert!(stdout.contains("positive-imaginary removed"));
+    assert!(stdout.contains(&format!("{}...", std::path::MAIN_SEPARATOR)));
+    assert!(!stdout.contains(&root.display().to_string()));
+    assert!(stdout.contains("Summary"));
+    assert!(stdout.contains("2 analyzed"));
+
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]
