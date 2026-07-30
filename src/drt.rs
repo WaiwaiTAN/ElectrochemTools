@@ -174,6 +174,137 @@ pub struct KkConsistencyRow {
     pub residual_imag_from_real: f64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct KkEdgeTrimResult {
+    #[serde(skip_serializing)]
+    pub data: EisData,
+    pub initial_kk: KkConsistencyResult,
+    pub final_kk: KkConsistencyResult,
+    pub residual_threshold_percent: f64,
+    pub min_points: usize,
+    pub lambda: f64,
+    pub n_tau: usize,
+    pub regularization_order: usize,
+    pub original_points: usize,
+    pub retained_points: usize,
+    pub trimmed_high_frequency_points: usize,
+    pub trimmed_low_frequency_points: usize,
+    pub stopped_at_min_points: bool,
+}
+
+pub fn kk_point_relative_residual_percent(row: &KkConsistencyRow) -> f64 {
+    let residual = row
+        .residual_real_from_imag
+        .hypot(row.residual_imag_from_real);
+    let reference = row.z_real_exp.hypot(row.z_imag_exp).max(1.0e-300);
+    residual / reference * 100.0
+}
+
+pub fn trim_kk_frequency_edges(
+    data: &EisData,
+    residual_threshold_percent: f64,
+    min_points: usize,
+    lambda: f64,
+    n_tau: usize,
+    regularization_order: usize,
+) -> Result<KkEdgeTrimResult> {
+    if !residual_threshold_percent.is_finite() || residual_threshold_percent < 0.0 {
+        bail!("KK residual threshold must be finite and non-negative");
+    }
+    if min_points < 3 {
+        bail!("KK minimum retained points must be at least 3");
+    }
+    if data.len() < min_points {
+        bail!(
+            "KK trimming requires at least {min_points} points, but only {} remain after input filtering",
+            data.len()
+        );
+    }
+
+    let original_points = data.len();
+    let initial_kk = estimate_kk_for_trim(data, lambda, n_tau, regularization_order)?;
+    let mut current_data = data.clone();
+    let mut current_kk = initial_kk.clone();
+    let mut trimmed_high = 0usize;
+    let mut trimmed_low = 0usize;
+
+    loop {
+        let removable = current_data.len().saturating_sub(min_points);
+        if removable == 0 {
+            break;
+        }
+
+        let mut first = 0usize;
+        let mut end = current_data.len();
+        let mut remaining_budget = removable;
+        while remaining_budget > 0 && first < end {
+            let high_residual = kk_point_relative_residual_percent(&current_kk.rows[first]);
+            let low_residual = kk_point_relative_residual_percent(&current_kk.rows[end - 1]);
+            let high_bad = high_residual > residual_threshold_percent;
+            let low_bad = low_residual > residual_threshold_percent;
+            if !high_bad && !low_bad {
+                break;
+            }
+            if high_bad && (!low_bad || high_residual >= low_residual) {
+                first += 1;
+                trimmed_high += 1;
+            } else {
+                end -= 1;
+                trimmed_low += 1;
+            }
+            remaining_budget -= 1;
+        }
+
+        if first == 0 && end == current_data.len() {
+            break;
+        }
+        current_data = slice_eis_data(&current_data, first, end)?;
+        current_kk = estimate_kk_for_trim(&current_data, lambda, n_tau, regularization_order)?;
+    }
+
+    let stopped_at_min_points = current_data.len() == min_points
+        && (current_kk.rows.first().is_some_and(|row| {
+            kk_point_relative_residual_percent(row) > residual_threshold_percent
+        }) || current_kk.rows.last().is_some_and(|row| {
+            kk_point_relative_residual_percent(row) > residual_threshold_percent
+        }));
+
+    Ok(KkEdgeTrimResult {
+        retained_points: current_data.len(),
+        data: current_data,
+        initial_kk,
+        final_kk: current_kk,
+        residual_threshold_percent,
+        min_points,
+        lambda,
+        n_tau,
+        regularization_order,
+        original_points,
+        trimmed_high_frequency_points: trimmed_high,
+        trimmed_low_frequency_points: trimmed_low,
+        stopped_at_min_points,
+    })
+}
+
+fn estimate_kk_for_trim(
+    data: &EisData,
+    lambda: f64,
+    n_tau: usize,
+    regularization_order: usize,
+) -> Result<KkConsistencyResult> {
+    let (tau_min, tau_max) = infer_tau_bounds(data)?;
+    let tau = make_log_tau_grid(tau_min, tau_max, n_tau)?;
+    estimate_kk_consistency(data, &tau, lambda, regularization_order)
+}
+
+fn slice_eis_data(data: &EisData, first: usize, end: usize) -> Result<EisData> {
+    EisData::new(
+        data.frequency_hz[first..end].to_vec(),
+        data.z_real[first..end].to_vec(),
+        data.z_imag[first..end].to_vec(),
+    )
+}
+
 pub fn make_log_tau_grid(tau_min: f64, tau_max: f64, n_tau: usize) -> Result<Vec<f64>> {
     if !tau_min.is_finite() || tau_min <= 0.0 {
         bail!("tau_min must be finite and > 0");

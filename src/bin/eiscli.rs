@@ -4,14 +4,15 @@ use electrochem_tools::batch::{
     BatchOptions, BatchReport, BatchStatus, default_jobs, run_batch_with_resume,
 };
 use electrochem_tools::drt::{
-    BayesianSettings, DrtBasis, DrtConstraintConfig, DrtSettings, DrtSolverOptions, ShapeControl,
-    SolverReport, TauGridMode, estimate_kk_consistency, infer_tau_bounds, make_log_tau_grid,
-    scan_lambda, solve_drt,
+    BayesianSettings, DrtBasis, DrtConstraintConfig, DrtSettings, DrtSolverOptions,
+    KkConsistencyResult, KkEdgeTrimResult, ShapeControl, SolverReport, TauGridMode,
+    estimate_kk_consistency, infer_tau_bounds, kk_point_relative_residual_percent,
+    make_log_tau_grid, scan_lambda, solve_drt, trim_kk_frequency_edges,
 };
 use electrochem_tools::drt_compare::compare_with_matlab_outputs;
 use electrochem_tools::ecm::{EcmModelSpec, EcmParams};
 use electrochem_tools::eis::{CleanBatchOptions, CleanOptions, ImagSignPolicy, clean_files};
-use electrochem_tools::eis_io::{read_eis_with_cleaning, write_impedance_csv};
+use electrochem_tools::eis_io::{read_eis_with_cleaning, write_eis_csv, write_impedance_csv};
 use electrochem_tools::fit::{
     EcmFitSettings, PartialEcmInit, Weighting, complete_initial_ecm, fit_ecm,
 };
@@ -28,7 +29,12 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "EIS validation, DRT, and ECM fitting CLI")]
+#[command(
+    author,
+    version,
+    about = "EIS validation, DRT, and ECM fitting CLI",
+    after_help = "Run `eiscli <COMMAND> --help` for command-specific options and copyable examples."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -61,6 +67,24 @@ struct CleanBatchArgs {
         help = "Write flat stem-prefixed outputs here instead of beside each input"
     )]
     out_root: Option<PathBuf>,
+}
+
+#[derive(Args, Debug, Clone, Copy)]
+struct KkTrimArgs {
+    #[arg(
+        long,
+        value_name = "PERCENT",
+        help = "Trim only consecutive high/low-frequency edge points whose combined pointwise KK residual exceeds this percentage of |Z_exp|"
+    )]
+    kk_residual_threshold: Option<f64>,
+    #[arg(
+        long,
+        default_value_t = 10,
+        value_name = "N",
+        requires = "kk_residual_threshold",
+        help = "Minimum experimental points retained after positive-imaginary filtering and KK edge trimming"
+    )]
+    kk_min_points: usize,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -107,6 +131,18 @@ impl From<EcmInitialArgs> for PartialEcmInit {
 #[derive(Subcommand, Debug)]
 enum Commands {
     /// Score EIS data with a Hilbert/Kramers-Kronig consistency check.
+    #[command(after_help = "Examples:
+  Score only:
+    eiscli validate -i data.z60
+
+  Trim failing frequency edges and write per-point residuals plus reusable data:
+    eiscli validate -i data.z60 --kk-residual-threshold 3 --kk-min-points 12 --out-root result/kk
+
+The pointwise threshold is:
+  100 * hypot(residual_real_from_imag, residual_imag_from_real) / |Z_exp|
+
+Only consecutive failing points at the high- and low-frequency edges are removed.
+Interior points are retained. KK is recomputed after every trimming round.")]
     Validate {
         #[arg(short = 'i', long = "input", required = true, num_args = 1..)]
         input: Vec<PathBuf>,
@@ -120,8 +156,26 @@ enum Commands {
         flip_imag: bool,
         #[arg(long)]
         keep_positive_imag: bool,
+        #[command(flatten)]
+        kk_trim: KkTrimArgs,
+        #[arg(
+            long,
+            help = "Write <stem>_kk_residuals.csv, <stem>_kk_trimmed.csv, and <stem>_kk_summary.json here"
+        )]
+        out_root: Option<PathBuf>,
+        #[arg(long, requires = "out_root")]
+        overwrite: bool,
     },
     /// Validate and clean one or more EIS files using the shared input layer.
+    #[command(after_help = "Examples:
+  Clean beside the input file:
+    eiscli clean -i data.z60
+
+  Clean several files into one output directory:
+    eiscli clean -i first.z60 second.z60 --out-root cleaned --overwrite
+
+Cleaning writes <stem>_cleaned.csv, <stem>_cleaned.z60, and
+<stem>_clean_state.json.")]
     Clean {
         #[arg(short = 'i', long = "input", required = true, num_args = 1..)]
         input: Vec<PathBuf>,
@@ -135,6 +189,15 @@ enum Commands {
         batch: CleanBatchArgs,
     },
     /// Tikhonov DRT with piecewise-linear or Gaussian discretization.
+    #[command(after_help = "Examples:
+  Standard DRT:
+    eiscli drt -i data.z60 --lambda 1e-3 --n-tau 100
+
+  Apply KK frequency-edge trimming directly before DRT:
+    eiscli drt -i data.z60 --kk-residual-threshold 3 --kk-min-points 12 --out-root result
+
+When KK trimming is enabled, kk_trim_summary.json records the threshold, removed
+high/low-frequency counts, retained count, and initial/final KK scores.")]
     Drt {
         #[arg(short = 'i', long = "input", required = true, num_args = 1..)]
         input: Vec<PathBuf>,
@@ -168,6 +231,8 @@ enum Commands {
         flip_imag: bool,
         #[arg(long)]
         keep_positive_imag: bool,
+        #[command(flatten)]
+        kk_trim: KkTrimArgs,
         #[arg(long)]
         nonnegative: bool,
         #[arg(long)]
@@ -224,6 +289,15 @@ enum Commands {
         batch: BatchArgs,
     },
     /// Equivalent-circuit fitting with one/two RC or RQ branches and optional Warburg diffusion.
+    #[command(after_help = "Examples:
+  Standard ECM fit:
+    eiscli fit-ecm -i data.z60 --model R_QR --auto-init
+
+  Apply KK frequency-edge trimming directly before ECM fitting:
+    eiscli fit-ecm -i data.z60 --model R_QR --auto-init --kk-residual-threshold 3 --kk-min-points 12 --out-root result
+
+When KK trimming is enabled, kk_trim_summary.json records the threshold, removed
+high/low-frequency counts, retained count, and initial/final KK scores.")]
     FitEcm {
         #[arg(short = 'i', long = "input", required = true, num_args = 1..)]
         input: Vec<PathBuf>,
@@ -246,6 +320,8 @@ enum Commands {
         flip_imag: bool,
         #[arg(long)]
         keep_positive_imag: bool,
+        #[command(flatten)]
+        kk_trim: KkTrimArgs,
         #[arg(long)]
         include_correlation_matrix: bool,
         #[command(flatten)]
@@ -343,6 +419,9 @@ fn main() -> Result<()> {
             regularization_order,
             flip_imag,
             keep_positive_imag,
+            kk_trim,
+            out_root,
+            overwrite,
         } => run_validate(
             input,
             lambda,
@@ -350,6 +429,9 @@ fn main() -> Result<()> {
             regularization_order,
             flip_imag,
             keep_positive_imag,
+            kk_trim,
+            out_root,
+            overwrite,
         ),
         Commands::Clean {
             input,
@@ -375,6 +457,7 @@ fn main() -> Result<()> {
             regularization_order,
             flip_imag,
             keep_positive_imag,
+            kk_trim,
             nonnegative,
             fit_inductance,
             credible_intervals,
@@ -407,6 +490,7 @@ fn main() -> Result<()> {
             regularization_order,
             flip_imag,
             keep_positive_imag,
+            kk_trim,
             nonnegative,
             fit_inductance,
             credible_intervals,
@@ -433,6 +517,7 @@ fn main() -> Result<()> {
             tol,
             flip_imag,
             keep_positive_imag,
+            kk_trim,
             include_correlation_matrix,
             batch,
         } => run_fit_ecm_batch(
@@ -445,12 +530,14 @@ fn main() -> Result<()> {
             tol,
             flip_imag,
             keep_positive_imag,
+            kk_trim,
             include_correlation_matrix,
             batch,
         ),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_validate(
     inputs: Vec<PathBuf>,
     lambda: f64,
@@ -458,6 +545,9 @@ fn run_validate(
     regularization_order: usize,
     flip_imag: bool,
     keep_positive_imag: bool,
+    kk_trim: KkTrimArgs,
+    out_root: Option<PathBuf>,
+    overwrite: bool,
 ) -> Result<()> {
     if !lambda.is_finite() || lambda < 0.0 {
         bail!("lambda must be finite and non-negative");
@@ -467,6 +557,10 @@ fn run_validate(
     }
     if regularization_order > 2 {
         bail!("regularization_order must be 0, 1, or 2");
+    }
+    validate_kk_trim_args(kk_trim)?;
+    if let Some(root) = &out_root {
+        fs::create_dir_all(root).with_context(|| format!("failed to create {}", root.display()))?;
     }
 
     let mut results = Vec::new();
@@ -482,18 +576,64 @@ fn run_validate(
             if !keep_positive_imag {
                 data.drop_positive_imag()?;
             }
-            let (tau_min, tau_max) = infer_tau_bounds(&data)?;
-            let tau = make_log_tau_grid(tau_min, tau_max, n_tau)?;
-            let score = estimate_kk_consistency(&data, &tau, lambda, regularization_order)?;
+            let (analyzed_data, initial_kk, score, trimmed_high, trimmed_low, stopped_at_min) =
+                if let Some(threshold) = kk_trim.kk_residual_threshold {
+                    let trimmed = trim_kk_frequency_edges(
+                        &data,
+                        threshold,
+                        kk_trim.kk_min_points,
+                        lambda,
+                        n_tau,
+                        regularization_order,
+                    )?;
+                    (
+                        trimmed.data.clone(),
+                        trimmed.initial_kk,
+                        trimmed.final_kk,
+                        trimmed.trimmed_high_frequency_points,
+                        trimmed.trimmed_low_frequency_points,
+                        trimmed.stopped_at_min_points,
+                    )
+                } else {
+                    let (tau_min, tau_max) = infer_tau_bounds(&data)?;
+                    let tau = make_log_tau_grid(tau_min, tau_max, n_tau)?;
+                    let score = estimate_kk_consistency(&data, &tau, lambda, regularization_order)?;
+                    (data.clone(), score.clone(), score, 0, 0, false)
+                };
+            let output_files = if let Some(root) = &out_root {
+                Some(write_validation_outputs(
+                    root,
+                    &input,
+                    &data,
+                    &analyzed_data,
+                    &initial_kk,
+                    &score,
+                    kk_trim,
+                    lambda,
+                    n_tau,
+                    regularization_order,
+                    trimmed_high,
+                    trimmed_low,
+                    stopped_at_min,
+                    overwrite,
+                )?)
+            } else {
+                None
+            };
             Ok(ValidationDisplayResult {
                 input: input.clone(),
                 score_percent: score.mean_score * 100.0,
                 real_to_imag_rmse_percent: score.real_to_imag_relative_rmse_percent,
                 imag_to_real_rmse_percent: score.imag_to_real_relative_rmse_percent,
-                analyzed_points: data.len(),
+                analyzed_points: analyzed_data.len(),
                 original_points,
                 positive_imag_points,
                 kept_positive_imag: keep_positive_imag,
+                trimmed_high_frequency_points: trimmed_high,
+                trimmed_low_frequency_points: trimmed_low,
+                residual_threshold_percent: kk_trim.kk_residual_threshold,
+                stopped_at_min_points: stopped_at_min,
+                output_files,
             })
         })();
         match result {
@@ -509,6 +649,18 @@ fn run_validate(
     Ok(())
 }
 
+fn validate_kk_trim_args(args: KkTrimArgs) -> Result<()> {
+    if let Some(threshold) = args.kk_residual_threshold
+        && (!threshold.is_finite() || threshold < 0.0)
+    {
+        bail!("--kk-residual-threshold must be finite and non-negative");
+    }
+    if args.kk_residual_threshold.is_some() && args.kk_min_points < 3 {
+        bail!("--kk-min-points must be at least 3");
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 struct ValidationDisplayResult {
     input: PathBuf,
@@ -519,6 +671,139 @@ struct ValidationDisplayResult {
     original_points: usize,
     positive_imag_points: usize,
     kept_positive_imag: bool,
+    trimmed_high_frequency_points: usize,
+    trimmed_low_frequency_points: usize,
+    residual_threshold_percent: Option<f64>,
+    stopped_at_min_points: bool,
+    output_files: Option<ValidationOutputPaths>,
+}
+
+#[derive(Debug)]
+struct ValidationOutputPaths {
+    residuals: PathBuf,
+    trimmed: PathBuf,
+    summary: PathBuf,
+}
+
+#[derive(Serialize)]
+struct ValidationSummary<'a> {
+    input: &'a Path,
+    residual_threshold_percent: Option<f64>,
+    min_points: Option<usize>,
+    lambda: f64,
+    n_tau: usize,
+    regularization_order: usize,
+    points_after_positive_imag_filter: usize,
+    retained_points: usize,
+    trimmed_high_frequency_points: usize,
+    trimmed_low_frequency_points: usize,
+    stopped_at_min_points: bool,
+    initial_kk: &'a KkConsistencyResult,
+    final_kk: &'a KkConsistencyResult,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_validation_outputs(
+    out_root: &Path,
+    input: &Path,
+    filtered_data: &EisData,
+    trimmed_data: &EisData,
+    initial_kk: &KkConsistencyResult,
+    final_kk: &KkConsistencyResult,
+    kk_trim: KkTrimArgs,
+    lambda: f64,
+    n_tau: usize,
+    regularization_order: usize,
+    trimmed_high: usize,
+    trimmed_low: usize,
+    stopped_at_min_points: bool,
+    overwrite: bool,
+) -> Result<ValidationOutputPaths> {
+    let stem = input
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| anyhow::anyhow!("input has no valid file stem: {}", input.display()))?;
+    let paths = ValidationOutputPaths {
+        residuals: out_root.join(format!("{stem}_kk_residuals.csv")),
+        trimmed: out_root.join(format!("{stem}_kk_trimmed.csv")),
+        summary: out_root.join(format!("{stem}_kk_summary.json")),
+    };
+    if !overwrite {
+        for path in [&paths.residuals, &paths.trimmed, &paths.summary] {
+            if path.exists() {
+                bail!(
+                    "validation output {} already exists; use --overwrite or choose another --out-root",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    let retained_end = filtered_data.len().saturating_sub(trimmed_low);
+    let mut writer = csv::Writer::from_path(&paths.residuals)
+        .with_context(|| format!("failed to create {}", paths.residuals.display()))?;
+    writer.write_record([
+        "frequency",
+        "Z_real_exp",
+        "Z_imag_exp",
+        "Z_real_from_imag_initial",
+        "Z_imag_from_real_initial",
+        "residual_real_from_imag_initial",
+        "residual_imag_from_real_initial",
+        "combined_relative_residual_percent_initial",
+        "kept",
+        "trim_reason",
+        "residual_real_from_imag_final",
+        "residual_imag_from_real_final",
+        "combined_relative_residual_percent_final",
+    ])?;
+    for (index, row) in initial_kk.rows.iter().enumerate() {
+        let kept = index >= trimmed_high && index < retained_end;
+        let trim_reason = if index < trimmed_high {
+            "high_frequency_edge"
+        } else if index >= retained_end {
+            "low_frequency_edge"
+        } else {
+            ""
+        };
+        let final_row = kept.then(|| &final_kk.rows[index - trimmed_high]);
+        writer.serialize((
+            row.frequency,
+            row.z_real_exp,
+            row.z_imag_exp,
+            row.z_real_from_imag,
+            row.z_imag_from_real,
+            row.residual_real_from_imag,
+            row.residual_imag_from_real,
+            kk_point_relative_residual_percent(row),
+            kept,
+            trim_reason,
+            final_row.map(|value| value.residual_real_from_imag),
+            final_row.map(|value| value.residual_imag_from_real),
+            final_row.map(kk_point_relative_residual_percent),
+        ))?;
+    }
+    writer.flush()?;
+
+    write_eis_csv(&paths.trimmed, trimmed_data)?;
+    let summary = ValidationSummary {
+        input,
+        residual_threshold_percent: kk_trim.kk_residual_threshold,
+        min_points: kk_trim.kk_residual_threshold.map(|_| kk_trim.kk_min_points),
+        lambda,
+        n_tau,
+        regularization_order,
+        points_after_positive_imag_filter: filtered_data.len(),
+        retained_points: trimmed_data.len(),
+        trimmed_high_frequency_points: trimmed_high,
+        trimmed_low_frequency_points: trimmed_low,
+        stopped_at_min_points,
+        initial_kk,
+        final_kk,
+    };
+    fs::write(&paths.summary, serde_json::to_string_pretty(&summary)?)
+        .with_context(|| format!("failed to write {}", paths.summary.display()))?;
+    Ok(paths)
 }
 
 fn render_validation_dashboard(
@@ -587,6 +872,22 @@ fn render_validation_dashboard(
             "│ Data       {} / {} points  ·  {filtering}",
             result.analyzed_points, result.original_points
         );
+        if let Some(threshold) = result.residual_threshold_percent {
+            let min_point_note = if result.stopped_at_min_points {
+                "  ·  stopped at minimum"
+            } else {
+                ""
+            };
+            println!(
+                "│ KK trim    >{threshold:.3}%  ·  high {}  ·  low {}{min_point_note}",
+                result.trimmed_high_frequency_points, result.trimmed_low_frequency_points
+            );
+        }
+        if let Some(paths) = &result.output_files {
+            println!("│ Residuals  {}", compact_display_path(&paths.residuals));
+            println!("│ Trimmed    {}", compact_display_path(&paths.trimmed));
+            println!("│ Summary    {}", compact_display_path(&paths.summary));
+        }
         println!("│ Path       {}", compact_display_path(&result.input));
         println!("└─");
     }
@@ -731,6 +1032,7 @@ fn run_drt_batch(
     regularization_order: usize,
     flip_imag: bool,
     keep_positive_imag: bool,
+    kk_trim: KkTrimArgs,
     nonnegative: bool,
     fit_inductance: bool,
     credible_intervals: bool,
@@ -747,6 +1049,7 @@ fn run_drt_batch(
     compare_matlab_regression: Option<PathBuf>,
     batch: BatchArgs,
 ) -> Result<()> {
+    validate_kk_trim_args(kk_trim)?;
     let bayesian = bayesian.then(|| BayesianSettings {
         samples: bayesian_samples.unwrap_or(5_000),
         burn_in: bayesian_burn_in.unwrap_or(500),
@@ -759,7 +1062,12 @@ fn run_drt_batch(
     let effective_nonnegative = nonnegative || bayesian.is_some();
     let options = batch_options(&batch, "drt", inputs.len());
     let configuration = json!({
-        "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": !keep_positive_imag},
+        "input_policy": {
+            "flip_imag": flip_imag,
+            "drop_positive_imag": !keep_positive_imag,
+            "kk_residual_threshold_percent": kk_trim.kk_residual_threshold,
+            "kk_min_points": kk_trim.kk_residual_threshold.map(|_| kk_trim.kk_min_points),
+        },
         "lambda": lambda, "auto_lambda": auto_lambda, "lambda_min": lambda_min,
         "lambda_max": lambda_max, "n_lambda": n_lambda,
         "tau_min": tau_min, "tau_max": tau_max, "n_tau": n_tau, "tau_grid": tau_grid,
@@ -805,6 +1113,7 @@ fn run_drt_batch(
                     regularization_order,
                     flip_imag,
                     keep_positive_imag,
+                    kk_trim,
                     effective_nonnegative,
                     fit_inductance,
                     credible_intervals,
@@ -835,13 +1144,23 @@ fn run_fit_ecm_batch(
     tol: f64,
     flip_imag: bool,
     keep_positive_imag: bool,
+    kk_trim: KkTrimArgs,
     include_correlation_matrix: bool,
     batch: BatchArgs,
 ) -> Result<()> {
+    validate_kk_trim_args(kk_trim)?;
     let model: EcmModelSpec = model_name.parse()?;
     let options = batch_options(&batch, "fit_ecm", inputs.len());
     let configuration = json!({
-        "input_policy": {"flip_imag": flip_imag, "drop_positive_imag": !keep_positive_imag},
+        "input_policy": {
+            "flip_imag": flip_imag,
+            "drop_positive_imag": !keep_positive_imag,
+            "kk_residual_threshold_percent": kk_trim.kk_residual_threshold,
+            "kk_min_points": kk_trim.kk_residual_threshold.map(|_| kk_trim.kk_min_points),
+            "kk_lambda": 1.0e-3,
+            "kk_n_tau": 100,
+            "kk_regularization_order": 1,
+        },
         "model": model.canonical_name(),
         "initial": {
             "rs": initial.rs,
@@ -872,6 +1191,7 @@ fn run_fit_ecm_batch(
                     tol,
                     flip_imag,
                     keep_positive_imag,
+                    kk_trim,
                     include_correlation_matrix,
                     Some(output.to_path_buf()),
                 )?;
@@ -946,6 +1266,7 @@ fn run_drt(
     regularization_order: usize,
     flip_imag: bool,
     keep_positive_imag: bool,
+    kk_trim: KkTrimArgs,
     nonnegative: bool,
     fit_inductance: bool,
     credible_intervals: bool,
@@ -959,8 +1280,11 @@ fn run_drt(
     out: Option<PathBuf>,
 ) -> Result<()> {
     let data = read_analysis_data(&input, flip_imag, keep_positive_imag, "DRT")?;
+    let (data, kk_trim_result) =
+        apply_kk_trim_for_analysis(data, kk_trim, lambda, n_tau, regularization_order, "DRT")?;
     let out = out.unwrap_or_else(|| default_output_dir(&input, "drt"));
     fs::create_dir_all(&out).with_context(|| format!("failed to create {}", out.display()))?;
+    write_analysis_kk_trim_summary(&out, kk_trim_result.as_ref())?;
 
     let mut settings = DrtSettings {
         lambda,
@@ -1243,12 +1567,16 @@ fn run_fit_ecm(
     tol: f64,
     flip_imag: bool,
     keep_positive_imag: bool,
+    kk_trim: KkTrimArgs,
     include_correlation_matrix: bool,
     out: Option<PathBuf>,
 ) -> Result<()> {
     let data = read_analysis_data(&input, flip_imag, keep_positive_imag, "ECM fitting")?;
+    let (data, kk_trim_result) =
+        apply_kk_trim_for_analysis(data, kk_trim, 1.0e-3, 100, 1, "ECM fitting")?;
     let out = out.unwrap_or_else(|| default_output_dir(&input, "ecm"));
     fs::create_dir_all(&out).with_context(|| format!("failed to create {}", out.display()))?;
+    write_analysis_kk_trim_summary(&out, kk_trim_result.as_ref())?;
 
     let initial: EcmParams = complete_initial_ecm(&data, &model, partial_initial, auto_init)?;
     let result = fit_ecm(
@@ -1328,6 +1656,49 @@ fn read_analysis_data(
         );
     }
     Ok(data)
+}
+
+fn apply_kk_trim_for_analysis(
+    data: EisData,
+    args: KkTrimArgs,
+    lambda: f64,
+    n_tau: usize,
+    regularization_order: usize,
+    analysis: &str,
+) -> Result<(EisData, Option<KkEdgeTrimResult>)> {
+    let Some(threshold) = args.kk_residual_threshold else {
+        return Ok((data, None));
+    };
+    let result = trim_kk_frequency_edges(
+        &data,
+        threshold,
+        args.kk_min_points,
+        lambda,
+        n_tau,
+        regularization_order,
+    )?;
+    println!(
+        "KK edge trim ({analysis}): retained {} of {} point(s), removed {} high-frequency and {} low-frequency point(s) at >{threshold:.3}% residual{}",
+        result.retained_points,
+        result.original_points,
+        result.trimmed_high_frequency_points,
+        result.trimmed_low_frequency_points,
+        if result.stopped_at_min_points {
+            " (stopped at minimum retained points)"
+        } else {
+            ""
+        }
+    );
+    Ok((result.data.clone(), Some(result)))
+}
+
+fn write_analysis_kk_trim_summary(out: &Path, result: Option<&KkEdgeTrimResult>) -> Result<()> {
+    if let Some(result) = result {
+        let path = out.join("kk_trim_summary.json");
+        fs::write(&path, serde_json::to_string_pretty(result)?)
+            .with_context(|| format!("failed to write {}", path.display()))?;
+    }
+    Ok(())
 }
 
 fn labeled_parameters(labels: &[String], values: &[f64]) -> BTreeMap<String, f64> {

@@ -75,3 +75,16 @@ pub fn write_impedance_csv(
     writer.flush()?;
     Ok(())
 }
+
+pub fn write_eis_csv(path: &Path, data: &EisData) -> Result<()> {
+    let mut writer = csv::Writer::from_path(path)
+        .with_context(|| format!("failed to create {}", path.display()))?;
+    writer.write_record(["frequency", "Z_real", "Z_imag"])?;
+    for ((&frequency, &z_real), &z_imag) in
+        data.frequency_hz.iter().zip(&data.z_real).zip(&data.z_imag)
+    {
+        writer.serialize((frequency, z_real, z_imag))?;
+    }
+    writer.flush()?;
+    Ok(())
+}

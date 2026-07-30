@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- `eiscli validate --out-root` now writes per-frequency directional KK residuals, a directly reusable trimmed EIS CSV, and an initial/final consistency summary.
+- Added iterative high/low-frequency edge trimming through `--kk-residual-threshold` and `--kk-min-points`.
+- DRT and ECM commands can apply the same KK edge trimming in memory before fitting and record `kk_trim_summary.json`.
+
 ## [0.1.2] - 2026-07-16
 
 ### Added

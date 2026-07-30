@@ -19,6 +19,19 @@ fn top_level_help_lists_existing_commands() {
     assert!(stdout.contains("drt"));
     assert!(stdout.contains("fit-ecm"));
     assert!(stdout.contains("validate"));
+    assert!(stdout.contains("eiscli <COMMAND> --help"));
+}
+
+#[test]
+fn validate_help_explains_kk_outputs_and_trimming() {
+    let output = eiscli().args(["validate", "--help"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("--kk-residual-threshold"));
+    assert!(stdout.contains("--kk-min-points"));
+    assert!(stdout.contains("<stem>_kk_residuals.csv"));
+    assert!(stdout.contains("hypot(residual_real_from_imag"));
+    assert!(stdout.contains("Interior points are retained"));
 }
 
 #[test]
@@ -62,6 +75,59 @@ fn validate_scores_multiple_expanded_inputs_with_hilbert_check() {
 }
 
 #[test]
+fn validate_writes_pointwise_residuals_and_respects_trim_minimum() {
+    let root = std::env::temp_dir().join(format!(
+        "electrochem_tools_validate_trim_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    let output = eiscli()
+        .args([
+            "validate",
+            "-i",
+            BAYESIAN_FIXTURE,
+            "--n-tau",
+            "30",
+            "--kk-residual-threshold",
+            "0",
+            "--kk-min-points",
+            "12",
+            "--out-root",
+        ])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("KK trim"));
+    assert!(stdout.contains("stopped at minimum"));
+
+    let residuals = fs::read_to_string(root.join("bayesian_eis_kk_residuals.csv")).unwrap();
+    assert!(residuals.contains("combined_relative_residual_percent_initial"));
+    assert!(residuals.contains("high_frequency_edge"));
+    assert!(residuals.contains("low_frequency_edge"));
+    assert_eq!(residuals.lines().count() - 1, 57);
+
+    let trimmed = fs::read_to_string(root.join("bayesian_eis_kk_trimmed.csv")).unwrap();
+    assert_eq!(trimmed.lines().count() - 1, 12);
+    let summary: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("bayesian_eis_kk_summary.json")).unwrap())
+            .unwrap();
+    assert_eq!(summary["retained_points"], 12);
+    assert_eq!(summary["stopped_at_min_points"], true);
+    assert_eq!(
+        summary["trimmed_high_frequency_points"].as_u64().unwrap()
+            + summary["trimmed_low_frequency_points"].as_u64().unwrap(),
+        45
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn drt_help_succeeds() {
     let output = eiscli().args(["drt", "--help"]).output().unwrap();
     assert!(output.status.success());
@@ -76,6 +142,10 @@ fn drt_help_succeeds() {
     assert!(stdout.contains("--bayesian-burn-in"));
     assert!(stdout.contains("--bayesian-seed"));
     assert!(stdout.contains("--bayesian-chains"));
+    assert!(stdout.contains("--kk-residual-threshold"));
+    assert!(stdout.contains("--kk-min-points"));
+    assert!(stdout.contains("Apply KK frequency-edge trimming directly before DRT"));
+    assert!(stdout.contains("kk_trim_summary.json"));
     assert!(!stdout.contains("--drop-positive-imag"));
 }
 
@@ -267,11 +337,10 @@ fn gaussian_drt_cli_uses_drttools_centers_and_records_shape_settings() {
 fn clean_help_succeeds() {
     let output = eiscli().args(["clean", "--help"]).output().unwrap();
     assert!(output.status.success());
-    assert!(
-        !String::from_utf8(output.stdout)
-            .unwrap()
-            .contains("--resume")
-    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("--resume"));
+    assert!(stdout.contains("Clean several files into one output directory"));
+    assert!(stdout.contains("<stem>_cleaned.csv"));
 }
 
 #[test]
@@ -282,7 +351,81 @@ fn fit_ecm_help_succeeds() {
     assert!(stdout.contains("--r2"));
     assert!(stdout.contains("--warburg-sigma"));
     assert!(stdout.contains("--keep-positive-imag"));
+    assert!(stdout.contains("--kk-residual-threshold"));
+    assert!(stdout.contains("--kk-min-points"));
+    assert!(stdout.contains("Apply KK frequency-edge trimming directly before ECM fitting"));
+    assert!(stdout.contains("kk_trim_summary.json"));
     assert!(!stdout.contains("--drop-positive-imag"));
+}
+
+#[test]
+fn kk_trimmed_points_feed_directly_into_drt_and_ecm() {
+    let root = std::env::temp_dir().join(format!(
+        "electrochem_tools_direct_kk_trim_{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    let drt_root = root.join("drt");
+    let drt = eiscli()
+        .args([
+            "drt",
+            "-i",
+            BAYESIAN_FIXTURE,
+            "--n-tau",
+            "30",
+            "--kk-residual-threshold",
+            "3",
+            "--kk-min-points",
+            "12",
+            "--out-root",
+        ])
+        .arg(&drt_root)
+        .output()
+        .unwrap();
+    assert!(
+        drt.status.success(),
+        "{}",
+        String::from_utf8_lossy(&drt.stderr)
+    );
+    let drt_dir = drt_root.join("bayesian_eis_drt");
+    let drt_trim: serde_json::Value =
+        serde_json::from_slice(&fs::read(drt_dir.join("kk_trim_summary.json")).unwrap()).unwrap();
+    let drt_fit: serde_json::Value =
+        serde_json::from_slice(&fs::read(drt_dir.join("residual_summary.json")).unwrap()).unwrap();
+    assert_eq!(drt_trim["trimmed_high_frequency_points"], 1);
+    assert_eq!(drt_trim["retained_points"], drt_fit["n_points"]);
+
+    let ecm_root = root.join("ecm");
+    let ecm = eiscli()
+        .args([
+            "fit-ecm",
+            "-i",
+            BAYESIAN_FIXTURE,
+            "--model",
+            "R_QR",
+            "--auto-init",
+            "--kk-residual-threshold",
+            "3",
+            "--kk-min-points",
+            "12",
+            "--out-root",
+        ])
+        .arg(&ecm_root)
+        .output()
+        .unwrap();
+    assert!(
+        ecm.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ecm.stderr)
+    );
+    let ecm_dir = ecm_root.join("bayesian_eis_fit_ecm");
+    let ecm_trim: serde_json::Value =
+        serde_json::from_slice(&fs::read(ecm_dir.join("kk_trim_summary.json")).unwrap()).unwrap();
+    let ecm_fit: serde_json::Value =
+        serde_json::from_slice(&fs::read(ecm_dir.join("fit_params.json")).unwrap()).unwrap();
+    assert_eq!(ecm_trim["trimmed_high_frequency_points"], 1);
+    assert_eq!(ecm_trim["retained_points"], ecm_fit["n_points"]);
+    let _ = fs::remove_dir_all(root);
 }
 
 #[test]

@@ -6,6 +6,8 @@ ElectrochemTools provides a strict/lenient shared EIS input layer, deterministic
 
 DRT and ECM fitting remove positive-imaginary points by default after optional sign flipping and report the number removed. `--keep-positive-imag` preserves them when inductive or other positive-imaginary behavior is part of the intended analysis.
 
+`eiscli validate` can write per-frequency KK residuals, a trimmed EIS CSV, and an initial/final JSON summary under `--out-root`. `--kk-residual-threshold` enables iterative trimming of consecutive failing points only at the high- and low-frequency edges, while `--kk-min-points` protects the retained window. DRT and ECM accept the same options and apply the trimmed data directly before fitting.
+
 MATLAB R2023b/Optimization Toolbox golden validation covers the piecewise-linear matrices, three constrained piecewise-linear end-to-end cases, and the default Gaussian Simple Run case at fixed upstream commit `034d9c4c4a4916a38a0e2f10381d931ffe1981b3`. See [matlab-validation.md](matlab-validation.md).
 
 ## DRTtools Simple Run compatibility
