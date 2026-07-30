@@ -1,4 +1,4 @@
-name: Windows release
+name: Cross-platform release
 
 on:
   workflow_dispatch:
@@ -12,12 +12,14 @@ permissions:
 jobs:
   windows-msvc:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.package.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-      - name: Resolve package metadata
+      - name: Resolve and validate package metadata
         id: package
         shell: pwsh
         run: |
@@ -28,14 +30,11 @@ jobs:
           if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
             throw "Tag $env:GITHUB_REF_NAME does not match Cargo package version v$version"
           }
-          $archive = "electrochem-tools-v$version-x86_64-pc-windows-msvc.zip"
           $notes = "docs/release-notes-v$version.md"
-          if ($env:GITHUB_REF_TYPE -eq 'tag' -and -not (Test-Path -LiteralPath $notes)) {
+          if (-not (Test-Path -LiteralPath $notes)) {
             throw "Missing release notes: $notes"
           }
           "version=$version" >> $env:GITHUB_OUTPUT
-          "archive=$archive" >> $env:GITHUB_OUTPUT
-          "notes=$notes" >> $env:GITHUB_OUTPUT
       - name: Debug tests
         run: cargo test --locked --all-targets --all-features
       - name: Release tests
@@ -43,42 +42,143 @@ jobs:
       - name: Package Windows binaries
         shell: pwsh
         run: ./scripts/package_windows.ps1
-      - name: CLI and fixture smoke tests
+      - name: CLI, KK trimming, DRT, and ECM smoke tests
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           $exe = '.\target\x86_64-pc-windows-msvc\release\eiscli.exe'
-          & $exe --version
+          $versionOutput = & $exe --version
+          if ($versionOutput -notmatch "${{ steps.package.outputs.version }}") {
+            throw "Unexpected version output: $versionOutput"
+          }
           & $exe --help
           & $exe validate --help
           & $exe clean --help
           & $exe drt --help
           & $exe fit-ecm --help
-          & $exe validate -i tests/fixtures/bayesian_eis.z60 --n-tau 30
+          & $exe validate -i tests/fixtures/bayesian_eis.z60 --n-tau 30 --kk-residual-threshold 3 --kk-min-points 12 --out-root target/smoke-kk
           & $exe clean -i tests/fixtures/bayesian_eis.z60 --out-root target/smoke-clean
-          & $exe drt -i tests/fixtures/bayesian_eis.z60 --nonnegative --n-tau 30 --out-root target/smoke-drt
-          & $exe fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR --auto-init --out-root target/smoke-ecm
+          & $exe drt -i tests/fixtures/bayesian_eis.z60 --nonnegative --n-tau 30 --kk-residual-threshold 3 --kk-min-points 12 --out-root target/smoke-drt
+          & $exe fit-ecm -i tests/fixtures/bayesian_eis.z60 --model R_QR --auto-init --kk-residual-threshold 3 --kk-min-points 12 --out-root target/smoke-ecm
           if (Test-Path target/smoke-clean/bayesian_eis_cleaned) { throw 'clean wrote the obsolete per-input directory layout' }
           if (Test-Path target/smoke-clean/batch_summary.csv) { throw 'clean wrote batch_summary.csv' }
           if (Test-Path target/smoke-clean/run.json) { throw 'clean wrote run.json' }
-          Get-Content target/smoke-clean/bayesian_eis_clean_state.json | ConvertFrom-Json | Out-Null
+          $kk = Get-Content target/smoke-kk/bayesian_eis_kk_summary.json | ConvertFrom-Json
+          $drtTrim = Get-Content target/smoke-drt/bayesian_eis_drt/kk_trim_summary.json | ConvertFrom-Json
           $drt = Get-Content target/smoke-drt/bayesian_eis_drt/run.json | ConvertFrom-Json
+          $drtSummary = Get-Content target/smoke-drt/bayesian_eis_drt/residual_summary.json | ConvertFrom-Json
+          $ecmTrim = Get-Content target/smoke-ecm/bayesian_eis_fit_ecm/kk_trim_summary.json | ConvertFrom-Json
           $ecm = Get-Content target/smoke-ecm/bayesian_eis_fit_ecm/run.json | ConvertFrom-Json
+          $ecmSummary = Get-Content target/smoke-ecm/bayesian_eis_fit_ecm/fit_params.json | ConvertFrom-Json
+          if ($kk.trimmed_high_frequency_points -lt 1) { throw 'validate did not trim the expected high-frequency edge' }
           if ($drt.status -ne 'success' -or $ecm.status -ne 'success') { throw 'computation manifest not successful' }
-          foreach ($path in @('target/smoke-clean/bayesian_eis_cleaned.csv', 'target/smoke-clean/bayesian_eis_cleaned.z60', 'target/smoke-drt/batch_summary.csv', 'target/smoke-drt/bayesian_eis_drt/gamma.csv', 'target/smoke-drt/bayesian_eis_drt/drt_gamma.svg', 'target/smoke-ecm/batch_summary.csv', 'target/smoke-ecm/bayesian_eis_fit_ecm/fit_params.json', 'target/smoke-ecm/bayesian_eis_fit_ecm/nyquist_fit.svg')) {
-            if (-not (Test-Path $path)) { throw "Missing smoke output: $path" }
+          if ($drtTrim.retained_points -ne $drtSummary.n_points) { throw 'DRT did not fit the KK-trimmed point set' }
+          if ($ecmTrim.retained_points -ne $ecmSummary.n_points) { throw 'ECM did not fit the KK-trimmed point set' }
+          foreach ($path in @(
+            'target/smoke-kk/bayesian_eis_kk_residuals.csv',
+            'target/smoke-kk/bayesian_eis_kk_trimmed.csv',
+            'target/smoke-clean/bayesian_eis_cleaned.csv',
+            'target/smoke-clean/bayesian_eis_cleaned.z60',
+            'target/smoke-drt/batch_summary.csv',
+            'target/smoke-drt/bayesian_eis_drt/gamma.csv',
+            'target/smoke-drt/bayesian_eis_drt/drt_gamma.svg',
+            'target/smoke-ecm/batch_summary.csv',
+            'target/smoke-ecm/bayesian_eis_fit_ecm/fit_params.json',
+            'target/smoke-ecm/bayesian_eis_fit_ecm/nyquist_fit.svg'
+          )) {
+            if (-not (Test-Path -LiteralPath $path)) { throw "Missing smoke output: $path" }
           }
       - uses: actions/upload-artifact@v4
         with:
-          name: electrochem-tools-v${{ steps.package.outputs.version }}-x86_64-pc-windows-msvc
+          name: electrochem-tools-v${{ steps.package.outputs.version }}-windows-msvc
           if-no-files-found: error
-          path: |
-            target/dist/${{ steps.package.outputs.archive }}
-            target/dist/SHA256SUMS.txt
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+          path: target/dist/windows/*
+
+  linux-gnu:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Resolve and validate package metadata
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "ElectrochemTools") | .version')"
+          if [[ -z "$version" || "$version" == "null" ]]; then
+            echo "ElectrochemTools package not found in Cargo metadata" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match Cargo package version v$version" >&2
+            exit 1
+          fi
+          notes="docs/release-notes-v$version.md"
+          if [[ ! -f "$notes" ]]; then
+            echo "Missing release notes: $notes" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Debug tests
+        run: cargo test --locked --all-targets --all-features
+      - name: Release tests
+        run: cargo test --locked --release --all-targets --all-features
+      - name: Package Linux binaries
+        shell: bash
+        run: bash ./scripts/package_linux.sh
+      - name: CLI, KK trimming, DRT, and ECM smoke tests
+        shell: bash
+        run: bash ./scripts/validate_linux_release.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: electrochem-tools-v${{ steps.package.outputs.version }}-linux-gnu
+          if-no-files-found: error
+          path: target/dist/linux/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows-msvc, linux-gnu]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm platform versions agree
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${{ needs.windows-msvc.outputs.version }}" == "${{ needs.linux-gnu.outputs.version }}" ]]
+          [[ "$GITHUB_REF_NAME" == "v${{ needs.windows-msvc.outputs.version }}" ]]
+          test -f "docs/release-notes-v${{ needs.windows-msvc.outputs.version }}.md"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: electrochem-tools-v${{ needs.windows-msvc.outputs.version }}-*
+          path: target/release-assets
+          merge-multiple: true
+      - name: Combine and verify checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target/release-assets
+          cat SHA256SUMS-windows.txt SHA256SUMS-linux.txt | sort -k2 > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+      - name: Create GitHub Release with Windows and Linux assets
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: pwsh
-        run: gh release create $env:GITHUB_REF_NAME "target/dist/${{ steps.package.outputs.archive }}" target/dist/SHA256SUMS.txt --verify-tag --title $env:GITHUB_REF_NAME --notes-file "${{ steps.package.outputs.notes }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=(
+            target/release-assets/*.zip
+            target/release-assets/*.tar.gz
+            target/release-assets/*.exe
+            target/release-assets/*-linux-x86_64
+            target/release-assets/SHA256SUMS.txt
+          )
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file "docs/release-notes-v${{ needs.windows-msvc.outputs.version }}.md"

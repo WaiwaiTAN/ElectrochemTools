@@ -2,11 +2,19 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-07-30
+
 ### Added
 
 - `eiscli validate --out-root` now writes per-frequency directional KK residuals, a directly reusable trimmed EIS CSV, and an initial/final consistency summary.
 - Added iterative high/low-frequency edge trimming through `--kk-residual-threshold` and `--kk-min-points`.
 - DRT and ECM commands can apply the same KK edge trimming in memory before fitting and record `kk_trim_summary.json`.
+- GitHub Releases now publish standalone Windows executables, a Windows archive, standalone Linux x86_64 binaries, a Linux archive, and a combined SHA-256 manifest.
+
+### Changed
+
+- Top-level and command-specific `--help` output now includes copyable examples and detailed KK trimming semantics.
+- Release creation is handled by a dedicated job after both Windows and Linux builds, tests, packaging, and smoke checks succeed.
 
 ## [0.1.2] - 2026-07-16
 

@@ -21,7 +21,7 @@ The audited implementation status and known numerical limitations are recorded i
 
 ### Windows release
 
-Prebuilt v0.1.2 binaries are currently provided for 64-bit Windows using the MSVC toolchain. Download `electrochem-tools-v0.1.2-x86_64-pc-windows-msvc.zip` from the GitHub Release, verify it against `SHA256SUMS.txt`, extract it, and run:
+Prebuilt v0.1.3 binaries are provided for 64-bit Windows using the MSVC toolchain. Download an individual `.exe` directly from the GitHub Release, or download `electrochem-tools-v0.1.3-x86_64-pc-windows-msvc.zip` for all four tools plus documentation. Verify downloads against `SHA256SUMS.txt`.
 
 ```powershell
 .\eiscli.exe --help
@@ -32,13 +32,25 @@ Prebuilt v0.1.2 binaries are currently provided for 64-bit Windows using the MSV
 
 Both cleaning entry points write `<input-stem>_cleaned.csv`, `<input-stem>_cleaned.z60`, and `<input-stem>_clean_state.json` beside each input, or as flat files below an optional `--out-root`. DRT and ECM assign each input a stable `<input-stem>_<process>` directory below `--out-root` and write their result files plus `run.json`.
 
+### Linux release
+
+Prebuilt v0.1.3 binaries are also provided for GNU/Linux x86_64. The tar archive preserves the normal command names and executable permissions:
+
+```bash
+tar -xzf electrochem-tools-v0.1.3-x86_64-unknown-linux-gnu.tar.gz
+cd electrochem-tools-v0.1.3-x86_64-unknown-linux-gnu
+./eiscli --help
+```
+
+Standalone assets use names such as `eiscli-linux-x86_64`; after downloading one directly, run `chmod +x eiscli-linux-x86_64` before use.
+
 ### Prerequisites
 
 - [Rust](https://www.rust-lang.org/tools/install) (toolchain supporting edition 2024)
 
 ### Build from source
 
-Linux/WSL and macOS users can build from source; v0.1.2 does not claim official prebuilt binaries for those platforms. The core code is designed as cross-platform Rust.
+macOS, other architectures, and unsupported Linux environments can build from source. The core code is designed as cross-platform Rust.
 
 ```bash
 git clone https://github.com/WaiwaiTAN/ElectrochemTools.git
